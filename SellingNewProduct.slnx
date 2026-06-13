@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="SellingNewProduct.API/SellingNewProduct.API.csproj" />
+  <Project Path="SellingNewProduct.Domain/SellingNewProduct.Domain.csproj" />
+  <Project Path="SellingNewProduct.Infrastructure.MongoDB/SellingNewProduct.Infrastructure.MongoDB.csproj" />
+  <Project Path="SellingNewProduct.Infrastructure.SqlServer/SellingNewProduct.Infrastructure.SqlServer.csproj" />
+</Solution>

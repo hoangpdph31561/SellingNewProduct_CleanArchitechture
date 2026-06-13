@@ -1,0 +1,142 @@
+# Kiến trúc — Clean Architecture + DDD
+
+## 1. Triết lý
+
+Mục tiêu duy nhất cần ghi nhớ: **Business rule không được biết nó đang được lưu ở đâu.**
+
+Nếu một ngày đổi từ SQL Server sang MongoDB (hoặc Postgres, hoặc file), thì:
+- Project `Domain` **không đổi một dòng nào**.
+- Chỉ thêm/đổi một project `Infrastructure.*` và đổi đăng ký DI ở `API`.
+
+Đây chính là phép thử để chứng minh kiến trúc đúng.
+
+## 1b. Hiểu lầm phổ biến: "Luồng gọi" vs "Chiều reference"
+
+Người mới hay nghĩ: *"API gọi Domain, Domain gọi Infrastructure, vì Infra có DB nên
+Infra ở trong cùng."* → Sai một nửa. Cần tách 2 khái niệm:
+
+| | Luồng gọi lúc chạy (runtime) | Chiều phụ thuộc / reference (compile-time) |
+|---|---|---|
+| Hướng | `API → Domain → IRepository → DB` | `API → Infrastructure → Domain` |
+| Ý nghĩa | Dữ liệu đi tới DB **sau cùng** (đúng) | Project nào `reference`/`using` project nào |
+| Domain | Dùng `IRepository` của chính nó | **KHÔNG reference Infra** — Infra reference Domain |
+
+→ Domain **định nghĩa interface**, Infrastructure **implement**. Nhờ Dependency Inversion,
+mũi tên reference đi **ngược** luồng gọi. Vì vậy **DB là tầng NGOÀI CÙNG** (thay thế được),
+không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là điều cho phép
+"bê Domain đi đâu cũng được".
+
+## 2. Sơ đồ phụ thuộc
+
+```
+┌─────────────────────────────────────────────┐
+│                    API                        │
+│  Controller · DTO · Validation · DI setup     │
+└───────────────┬───────────────┬───────────────┘
+                │               │
+                ▼               ▼
+┌──────────────────────┐ ┌──────────────────────┐
+│ Infrastructure.       │ │ Infrastructure.       │
+│ SqlServer             │ │ MongoDB               │
+│ DbContext · Record ·  │ │ DbContext · Document ·│
+│ Repository · Mapper   │ │ Repository · Mapper   │
+└───────────┬───────────┘ └───────────┬──────────┘
+            │                         │
+            └────────────┬────────────┘
+                         ▼
+            ┌──────────────────────────┐
+            │          Domain           │
+            │  Entity · ValueObject ·   │
+            │  AggregateRoot · Event ·  │
+            │  IRepository (interface)  │
+            └──────────────────────────┘
+```
+
+**Quy tắc vàng:** Mũi tên chỉ vào trong. Domain ở trung tâm, không có mũi tên nào đi ra khỏi nó.
+
+## 3. Vì sao tách persistence model khỏi domain entity?
+
+Domain entity được thiết kế cho **nghiệp vụ** (encapsulation, invariant, behavior).
+Persistence model được thiết kế cho **database** (khoá ngoại, kiểu cột, index, schema).
+
+Hai mục đích khác nhau → tách riêng. Mỗi Infrastructure tự định nghĩa model của mình:
+
+| Khái niệm | Domain (chung) | SqlServer | MongoDB |
+|-----------|----------------|-----------|---------|
+| Đơn hàng | `Order` (aggregate root) | `OrderRecord` + `OrderItemRecord` (2 bảng, FK) | `OrderDocument` (1 document lồng `Items[]`) |
+| Khách hàng | `Customer` | `CustomerRecord` | `CustomerDocument` |
+| Sản phẩm | `Product` | `ProductRecord` | `ProductDocument` |
+
+→ SQL chuẩn hoá thành nhiều bảng; Mongo nhúng (embed) trong một document. Domain không quan tâm.
+
+## 4. Luồng một request (ví dụ: tạo Order)
+
+```
+HTTP POST /api/orders
+   │
+   ▼
+[API] OrdersController nhận CreateOrderRequest (DTO)
+   │  → FluentValidation kiểm tra format request
+   ▼
+[API] Map DTO → gọi use case / repository
+   │
+   ▼
+[Domain] Order.Create(...) chạy business rule (vd: phải có ít nhất 1 item)
+   │  → sinh Domain Event nếu cần
+   ▼
+[Infrastructure] IOrderRepository.AddAsync(order)
+   │  → Mapper: Order (domain) → OrderRecord/OrderDocument
+   │  → DbContext.SaveChanges()  (EF Core: SQL Server hoặc Mongo provider)
+   ▼
+[API] Map Order → OrderResponse (DTO) → trả 201 Created
+```
+
+## 5. Interface nằm ở đâu? (Dependency Inversion)
+
+Interface repository **được khai báo trong Domain**, được **triển khai trong Infrastructure**.
+Đây là điểm cốt lõi của Dependency Inversion Principle:
+
+```csharp
+// Trong Domain (Domain/Repositories/IOrderRepository.cs)
+public interface IOrderRepository
+{
+    Task<Order?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task AddAsync(Order order, CancellationToken ct = default);
+    Task UpdateAsync(Order order, CancellationToken ct = default);
+}
+
+// Trong Infrastructure.SqlServer (implement) — Domain không biết file này tồn tại
+internal sealed class SqlServerOrderRepository : IOrderRepository { ... }
+
+// Trong Infrastructure.MongoDB (implement)
+internal sealed class MongoOrderRepository : IOrderRepository { ... }
+```
+
+## 6. Chọn database lúc runtime (Composition Root)
+
+`API/Program.cs` đọc cấu hình và đăng ký Infra tương ứng:
+
+```csharp
+var provider = builder.Configuration["DatabaseProvider"]; // "SqlServer" | "MongoDB"
+
+if (provider == "SqlServer")
+    builder.Services.AddSqlServerInfrastructure(builder.Configuration);
+else
+    builder.Services.AddMongoInfrastructure(builder.Configuration);
+```
+
+Mỗi Infra cung cấp một extension method `AddXxxInfrastructure(...)` để đăng ký
+`DbContext` + các repository. Đây là chỗ DUY NHẤT biết ta đang dùng DB nào.
+
+## 7. EF Core cho cả hai
+
+- SQL Server: `Microsoft.EntityFrameworkCore.SqlServer` + Migrations.
+- MongoDB: `MongoDB.EntityFrameworkCore` (provider chính thức của MongoDB cho EF Core).
+  Lưu ý: provider Mongo **không hỗ trợ migration** như SQL — schema tạo theo nhu cầu;
+  ta cấu hình mapping bằng `OnModelCreating` (ToCollection) thay vì `ToTable`.
+
+## 8. Xử lý lỗi nghiệp vụ
+
+Domain ném `DomainException` (hoặc dùng Result pattern) khi vi phạm invariant.
+API bắt và chuyển thành response chuẩn (ProblemDetails / 400). Xem ROADMAP để biết
+ta chọn cách nào (mặc định đề xuất: **DomainException + middleware** cho đơn giản khi học).
