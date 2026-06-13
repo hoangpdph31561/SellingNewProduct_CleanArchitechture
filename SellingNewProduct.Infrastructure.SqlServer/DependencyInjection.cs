@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
+using SellingNewProduct.Infrastructure.SqlServer.Queries;
 using SellingNewProduct.Infrastructure.SqlServer.Repositories;
 
 namespace SellingNewProduct.Infrastructure.SqlServer;
@@ -27,6 +29,10 @@ public static class DependencyInjection
         theServices.AddScoped<IProductRepository, SqlServerProductRepository>();
         theServices.AddScoped<IOrderRepository, SqlServerOrderRepository>();
         theServices.AddScoped<IPaymentRepository, SqlServerPaymentRepository>();
+
+        // Read side (CQRS-lite): JOIN/reporting queries, separate from the write repositories.
+        theServices.AddScoped<IOrderQueries, SqlServerOrderQueries>();
+        theServices.AddScoped<IReportQueries, SqlServerReportQueries>();
 
         return theServices;
     }

@@ -2,6 +2,8 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
+using SellingNewProduct.Application.Queries;
+using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Orders;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Domain.ValueObjects;
@@ -16,6 +18,7 @@ public sealed class OrdersController : ControllerBase
     private readonly ICustomerRepository myCustomerRepository;
     private readonly IEmployeeRepository myEmployeeRepository;
     private readonly IProductRepository myProductRepository;
+    private readonly IOrderQueries myOrderQueries;
     private readonly IValidator<CreateOrderRequest> myCreateValidator;
     private readonly IValidator<AddOrderDetailRequest> myAddDetailValidator;
 
@@ -24,6 +27,7 @@ public sealed class OrdersController : ControllerBase
         ICustomerRepository theCustomerRepository,
         IEmployeeRepository theEmployeeRepository,
         IProductRepository theProductRepository,
+        IOrderQueries theOrderQueries,
         IValidator<CreateOrderRequest> theCreateValidator,
         IValidator<AddOrderDetailRequest> theAddDetailValidator)
     {
@@ -31,6 +35,7 @@ public sealed class OrdersController : ControllerBase
         myCustomerRepository = theCustomerRepository;
         myEmployeeRepository = theEmployeeRepository;
         myProductRepository = theProductRepository;
+        myOrderQueries = theOrderQueries;
         myCreateValidator = theCreateValidator;
         myAddDetailValidator = theAddDetailValidator;
     }
@@ -40,6 +45,36 @@ public sealed class OrdersController : ControllerBase
     {
         var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
         return aOrder is null ? NotFound() : Ok(aOrder.ToResponse());
+    }
+
+    /// <summary>
+    /// Order detail enriched for display: includes the customer NAME and selling employee
+    /// NAME (instead of just CustomerId/EmployeeId). Uses the read side (JOIN) rather than
+    /// loading the aggregate.
+    /// </summary>
+    [HttpGet("{theId:guid}/view")]
+    public async Task<ActionResult<OrderDetailView>> GetView(Guid theId, CancellationToken theCancellationToken)
+    {
+        var aView = await myOrderQueries.GetOrderDetailAsync(theId, theCancellationToken);
+        return aView is null ? NotFound() : Ok(aView);
+    }
+
+    /// <summary>
+    /// List/search orders (with customer + employee names). Every parameter is optional.
+    /// Example: <c>GET /api/orders?theStatus=Confirmed&amp;theEmployeeId=...</c>
+    /// </summary>
+    [HttpGet]
+    public async Task<ActionResult<IReadOnlyList<OrderSummaryView>>> Search(
+        [FromQuery] Guid? theCustomerId,
+        [FromQuery] Guid? theEmployeeId,
+        [FromQuery] OrderStatus? theStatus,
+        [FromQuery] DateTime? theFromUtc,
+        [FromQuery] DateTime? theToUtc,
+        CancellationToken theCancellationToken)
+    {
+        var aResult = await myOrderQueries.SearchAsync(
+            theCustomerId, theEmployeeId, theStatus, theFromUtc, theToUtc, theCancellationToken);
+        return Ok(aResult);
     }
 
     [HttpPost]

@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
+using SellingNewProduct.Infrastructure.MongoDB.Queries;
 using SellingNewProduct.Infrastructure.MongoDB.Repositories;
 
 namespace SellingNewProduct.Infrastructure.MongoDB;
@@ -29,6 +31,10 @@ public static class DependencyInjection
         theServices.AddScoped<IProductRepository, MongoProductRepository>();
         theServices.AddScoped<IOrderRepository, MongoOrderRepository>();
         theServices.AddScoped<IPaymentRepository, MongoPaymentRepository>();
+
+        // Read side (CQRS-lite): Mongo cannot JOIN, so it stitches in memory.
+        theServices.AddScoped<IOrderQueries, MongoOrderQueries>();
+        theServices.AddScoped<IReportQueries, MongoReportQueries>();
 
         return theServices;
     }

@@ -39,10 +39,18 @@ không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là �
 │ Infrastructure.       │ │ Infrastructure.       │
 │ SqlServer             │ │ MongoDB               │
 │ DbContext · Record ·  │ │ DbContext · Document ·│
-│ Repository · Mapper   │ │ Repository · Mapper   │
+│ Repository · Mapper · │ │ Repository · Mapper · │
+│ Queries (JOIN)        │ │ Queries (stitch)      │
 └───────────┬───────────┘ └───────────┬──────────┘
             │                         │
             └────────────┬────────────┘
+                         ▼
+            ┌──────────────────────────┐
+            │       Application         │   ← read side (CQRS-lite)
+            │  ReadModel (View) ·       │
+            │  IOrderQueries ·          │
+            │  IReportQueries           │
+            └────────────┬─────────────┘
                          ▼
             ┌──────────────────────────┐
             │          Domain           │
@@ -53,6 +61,7 @@ không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là �
 ```
 
 **Quy tắc vàng:** Mũi tên chỉ vào trong. Domain ở trung tâm, không có mũi tên nào đi ra khỏi nó.
+Application nằm sát Domain (chỉ ref Domain); Infrastructure & API đều thấy được Application.
 
 ## 3. Vì sao tách persistence model khỏi domain entity?
 
@@ -134,6 +143,32 @@ Mỗi Infra cung cấp một extension method `AddXxxInfrastructure(...)` để 
 - MongoDB: `MongoDB.EntityFrameworkCore` (provider chính thức của MongoDB cho EF Core).
   Lưu ý: provider Mongo **không hỗ trợ migration** như SQL — schema tạo theo nhu cầu;
   ta cấu hình mapping bằng `OnModelCreating` (ToCollection) thay vì `ToTable`.
+
+## 7b. Read side — Write đi qua aggregate, Read đi thẳng JOIN (CQRS-lite)
+
+Repository (`IOrderRepository`) trả về **aggregate** `Order` để **thực thi nghiệp vụ** (Confirm, Ship…).
+Aggregate chỉ tham chiếu Customer/Employee **bằng id**, nên nó KHÔNG chứa `CustomerName`. Đúng theo DDD:
+một aggregate không ôm dữ liệu của aggregate khác (tránh dữ liệu lỗi thời).
+
+Vậy khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mua bao nhiêu đơn", ta dùng một đường riêng:
+
+| | Write side | Read side |
+|---|---|---|
+| Hợp đồng | `IOrderRepository` (Domain) | `IOrderQueries`, `IReportQueries` (Application) |
+| Trả về | Aggregate `Order` | Read-model phẳng (`OrderDetailView`…) |
+| Mục đích | Chạy business rule | Hiển thị / báo cáo nhanh |
+| Ghép nhiều bảng | ❌ (vỡ ranh giới aggregate) | ✅ JOIN/GROUP BY |
+
+**Vì sao read-model nằm ở Application, không ở Domain hay API?**
+- Không ở **Domain**: read-model không phải business rule, đưa vào sẽ làm Domain phình & bẩn.
+- Không ở **API**: Infrastructure phải *return* kiểu này khi implement query, mà Infra **không** ref API
+  (ngược chiều mũi tên). Application là tầng cả Infra lẫn API đều thấy → đặt ở đây là hợp lệ.
+
+**Mỗi Infrastructure tự chọn chiến lược thực thi cùng một interface:**
+- SQL Server: LINQ `join` → EF Core dịch thành **một câu SQL JOIN** chạy trên DB.
+- MongoDB: không JOIN quan hệ → **nạp document rồi ghép (stitch) trong bộ nhớ** (hoặc denormalize/`$lookup`).
+
+Đây lại là một lần nữa chứng minh luận điểm cốt lõi: đổi cơ chế lưu trữ, hợp đồng không đổi.
 
 ## 8. Xử lý lỗi nghiệp vụ
 

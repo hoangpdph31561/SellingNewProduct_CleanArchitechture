@@ -4,7 +4,7 @@
 > Mở chat mới → bảo Claude đọc file này trước. Sau mỗi bước hoàn thành, tick `[x]`.
 
 Cập nhật lần cuối: 2026-06-13
-Trạng thái tổng thể: **Phase 1-5 XONG. Toàn solution build pass (0 error). Còn lại Phase 6: user tự chạy demo + (tuỳ chọn) seed dữ liệu, unit test.**
+Trạng thái tổng thể: **Phase 1-5 + Phase 7 (Read side/Application) XONG. Toàn solution build pass (0 error). Còn lại Phase 6: user tự chạy demo + (tuỳ chọn) seed dữ liệu, unit test.**
 
 ---
 
@@ -93,10 +93,23 @@ dotnet run --project SellingNewProduct.API
 
 ---
 
+## Phase 7 — Read side / Application (CQRS-lite) ✅
+> Lý do thêm: hiển thị đơn cần TÊN khách & TÊN nhân viên (không phải Id); và các truy vấn
+> nhiều bảng (lịch sử mua hàng, sản phẩm bán chạy, doanh số NV) gây N+1 nếu enrich từng cái.
+- [x] Tạo project `SellingNewProduct.Application` (classlib) → ref Domain; add vào solution
+- [x] Read-model phẳng: `OrderDetailView`, `OrderLineView`, `CustomerOrderHistoryView`, `OrderSummaryView`, `BestSellingProductView`, `EmployeeSalesView`
+- [x] Query interface: `IOrderQueries` (GetOrderDetail / GetCustomerHistory / Search), `IReportQueries` (BestSellingProducts / EmployeeSalesLeaderboard)
+- [x] SqlServer implement bằng **JOIN/GROUP BY thật** (`SqlServerOrderQueries`, `SqlServerReportQueries`)
+- [x] MongoDB implement bằng **nạp + ghép trong bộ nhớ** (`MongoOrderQueries`, `MongoReportQueries`)
+- [x] Đăng ký DI cho cả 2 Infra; API ref Application
+- [x] Endpoint: `GET /api/orders/{id}/view`, `GET /api/orders` (search), `GET /api/customers/{id}/orders`, `GET /api/reports/best-selling-products`, `GET /api/reports/employee-sales`
+- [x] `dotnet build` PASS (0 error). Tài liệu cập nhật (README, ARCHITECTURE, code/05-Application)
+
 ## Quyết định kiến trúc đã chốt
-- 4 project: Domain / Infra.SqlServer / Infra.MongoDB / API. Giữ 3 layer, KHÔNG có Application.
-- Repository interface ở Domain (Dependency Inversion). Truy vấn báo cáo cũng để trong repository.
-- **Chưa làm CQRS** — giữ thuần Clean Architecture + DDD (sẽ tách read-side sau nếu cần).
+- 5 project: Domain / **Application** / Infra.SqlServer / Infra.MongoDB / API.
+- Repository interface (write side) ở Domain (Dependency Inversion).
+- **Read side tách riêng (CQRS-lite)**: read-model + query interface ở **Application**; Infra implement
+  (SQL = JOIN, Mongo = ghép bộ nhớ). Aggregate KHÔNG ôm dữ liệu aggregate khác (Order chỉ giữ CustomerId).
 - Persistence model tách riêng mỗi Infra (`*Record` / `*Document`).
 - **8 bảng:** User, Customer, Employee, Category, Product, Order, OrderDetail (con), Payment.
 - **BaseEntity<TId>** + enum `EntityStatus` → **xóa mềm** (không xóa cứng), lọc bằng EF Global Query Filter.

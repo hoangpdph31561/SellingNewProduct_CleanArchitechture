@@ -1,0 +1,42 @@
+using SellingNewProduct.Application.ReadModels;
+using SellingNewProduct.Domain.Orders;
+
+namespace SellingNewProduct.Application.Queries;
+
+/// <summary>
+/// Read side for orders — kept separate from <c>IOrderRepository</c> (write side).
+/// The repository returns the <see cref="Order"/> aggregate to run business logic;
+/// the methods here return flat read-models that already JOIN in customer/employee
+/// names, optimised for display (avoids the N+1 query problem).
+///
+/// Why does this interface live in Application instead of Domain?
+/// Because a read-model is not a business rule. Domain keeps only business
+/// invariants. Stitching several tables together for display is a concern of the
+/// application/read layer.
+/// </summary>
+public interface IOrderQueries
+{
+    /// <summary>
+    /// Gets one order with the customer name, employee name, lines and amount paid.
+    /// (SQL: JOIN Orders x Customers x Employees + SUM of Payments.)
+    /// </summary>
+    Task<OrderDetailView?> GetOrderDetailAsync(Guid theOrderId, CancellationToken theCancellationToken = default);
+
+    /// <summary>
+    /// A customer's purchase history: total orders + total spent + the order list
+    /// (each with the selling employee's name). Returns <c>null</c> if the customer is not found.
+    /// </summary>
+    Task<CustomerOrderHistoryView?> GetCustomerHistoryAsync(Guid theCustomerId, CancellationToken theCancellationToken = default);
+
+    /// <summary>
+    /// Search/filter orders for a list screen. Every parameter is optional (null = no filter).
+    /// Returns summary rows already enriched with customer and employee names.
+    /// </summary>
+    Task<IReadOnlyList<OrderSummaryView>> SearchAsync(
+        Guid? theCustomerId = null,
+        Guid? theEmployeeId = null,
+        OrderStatus? theStatus = null,
+        DateTime? theFromUtc = null,
+        DateTime? theToUtc = null,
+        CancellationToken theCancellationToken = default);
+}

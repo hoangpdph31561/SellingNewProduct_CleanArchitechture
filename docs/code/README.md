@@ -9,6 +9,7 @@ Bộ tài liệu này giải thích **từng file `.cs`** và **từng method** 
 | [02-Infrastructure-SqlServer.md](02-Infrastructure-SqlServer.md) | EF Core + SQL Server: record, config Fluent API, mapper, repository, migration |
 | [03-Infrastructure-MongoDB.md](03-Infrastructure-MongoDB.md) | EF Core + MongoDB: khác biệt so với SQL (nhúng document, lọc xóa mềm) |
 | [04-API.md](04-API.md) | DTO, validator, controller, middleware, Program.cs |
+| [05-Application.md](05-Application.md) | Read side / CQRS-lite: read-model + query JOIN nhiều bảng (SQL vs Mongo) |
 
 ## Quy ước đọc
 
