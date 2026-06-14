@@ -170,6 +170,20 @@ Vậy khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mu
 
 Đây lại là một lần nữa chứng minh luận điểm cốt lõi: đổi cơ chế lưu trữ, hợp đồng không đổi.
 
+## 7c. Phân trang, tìm kiếm, lọc & sắp xếp (cũng là read side)
+
+Danh sách thật luôn cần **phân trang** (đừng trả cả bảng), **tìm kiếm/lọc** nhiều tiêu chí và
+**sắp xếp**. Đây vẫn là *cách đọc*, không phải business → đặt ở **Application** (`PagedResult<T>`,
+`PageRequest`, các tham số lọc trên interface query) + **Infrastructure** (cách thực thi).
+
+- **Application**: `PagedResult<T>` (dữ liệu 1 trang + `TotalCount`/`TotalPages`/`HasNext`), `PageRequest`
+  (kẹp page/pageSize ở một chỗ), và interface `IProductQueries`/`IOrderQueries` nhận filter + `sortBy`/`sortDescending`.
+- **SQL Server**: đẩy hết `WHERE`/`ORDER BY`/`COUNT`/`OFFSET-FETCH` xuống DB; tên hiển thị lấy bằng JOIN.
+- **MongoDB**: đẩy phần làm được xuống DB; tìm theo tên cross-collection thì *resolve Id trước rồi `$in`*;
+  phần không JOIN được (vd sort theo tên ghép) xử lý/giới hạn ở bộ nhớ — một minh hoạ cho khác biệt thực thi.
+
+→ Chi tiết: [docs/code/06-Pagination-Search.md](code/06-Pagination-Search.md).
+
 ## 8. Xử lý lỗi nghiệp vụ
 
 Domain ném `DomainException` (hoặc dùng Result pattern) khi vi phạm invariant.

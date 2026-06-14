@@ -31,6 +31,7 @@ public static class DependencyInjection
         theServices.AddScoped<IPaymentRepository, SqlServerPaymentRepository>();
 
         // Read side (CQRS-lite): JOIN/reporting queries, separate from the write repositories.
+        theServices.AddScoped<IProductQueries, SqlServerProductQueries>();
         theServices.AddScoped<IOrderQueries, SqlServerOrderQueries>();
         theServices.AddScoped<IReportQueries, SqlServerReportQueries>();
 

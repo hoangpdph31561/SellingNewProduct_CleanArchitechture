@@ -1,3 +1,4 @@
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Orders;
 
@@ -29,14 +30,26 @@ public interface IOrderQueries
     Task<CustomerOrderHistoryView?> GetCustomerHistoryAsync(Guid theCustomerId, CancellationToken theCancellationToken = default);
 
     /// <summary>
-    /// Search/filter orders for a list screen. Every parameter is optional (null = no filter).
-    /// Returns summary rows already enriched with customer and employee names.
+    /// Search/filter orders for a list screen. Every filter is optional (null = no filter):
+    /// by customer/employee id, by a case-insensitive "contains" on the customer or employee
+    /// NAME, by order status, and by an order-date range. Returns ONE page of summary rows
+    /// (already enriched with customer and employee names) plus the total count, so the screen
+    /// can show paging without loading every matching order. <paramref name="thePage"/> is
+    /// 1-based; out-of-range page/pageSize values are clamped (see <see cref="PageRequest"/>).
+    /// <paramref name="theSortBy"/> accepts <c>orderDate</c> (default, newest first),
+    /// <c>totalAmount</c>, <c>customerName</c> or <c>employeeName</c>.
     /// </summary>
-    Task<IReadOnlyList<OrderSummaryView>> SearchAsync(
+    Task<PagedResult<OrderSummaryView>> SearchAsync(
         Guid? theCustomerId = null,
         Guid? theEmployeeId = null,
+        string? theCustomerName = null,
+        string? theEmployeeName = null,
         OrderStatus? theStatus = null,
         DateTime? theFromUtc = null,
         DateTime? theToUtc = null,
+        int thePage = 1,
+        int thePageSize = PageRequest.DefaultPageSize,
+        string? theSortBy = null,
+        bool theSortDescending = false,
         CancellationToken theCancellationToken = default);
 }

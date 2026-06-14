@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Orders;
@@ -60,20 +61,30 @@ public sealed class OrdersController : ControllerBase
     }
 
     /// <summary>
-    /// List/search orders (with customer + employee names). Every parameter is optional.
-    /// Example: <c>GET /api/orders?theStatus=Confirmed&amp;theEmployeeId=...</c>
+    /// List/search orders (with customer + employee names), paginated. Every filter is optional;
+    /// you can filter by customer/employee id OR by a "contains" on their name, by status and by
+    /// an order-date range, and sort by orderDate/totalAmount/customerName/employeeName.
+    /// Example: <c>GET /api/orders?theCustomerName=an&amp;theStatus=Confirmed&amp;theSortBy=totalAmount&amp;theSortDescending=true&amp;thePage=2&amp;thePageSize=20</c>
+    /// Returns one page plus the total count (page/pageSize are clamped to safe values).
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<OrderSummaryView>>> Search(
+    public async Task<ActionResult<PagedResult<OrderSummaryView>>> Search(
         [FromQuery] Guid? theCustomerId,
         [FromQuery] Guid? theEmployeeId,
+        [FromQuery] string? theCustomerName,
+        [FromQuery] string? theEmployeeName,
         [FromQuery] OrderStatus? theStatus,
         [FromQuery] DateTime? theFromUtc,
         [FromQuery] DateTime? theToUtc,
-        CancellationToken theCancellationToken)
+        [FromQuery] int thePage = 1,
+        [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
+        [FromQuery] string? theSortBy = null,
+        [FromQuery] bool theSortDescending = false,
+        CancellationToken theCancellationToken = default)
     {
         var aResult = await myOrderQueries.SearchAsync(
-            theCustomerId, theEmployeeId, theStatus, theFromUtc, theToUtc, theCancellationToken);
+            theCustomerId, theEmployeeId, theCustomerName, theEmployeeName, theStatus,
+            theFromUtc, theToUtc, thePage, thePageSize, theSortBy, theSortDescending, theCancellationToken);
         return Ok(aResult);
     }
 

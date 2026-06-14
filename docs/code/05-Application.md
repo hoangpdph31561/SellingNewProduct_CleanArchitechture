@@ -30,14 +30,19 @@ controller trả thẳng read-model cho gọn — vì chúng đã đúng hình d
 - `OrderDetailView` — 1 đơn + `CustomerName` + `EmployeeName` + danh sách `OrderLineView` + `AmountPaid`.
 - `CustomerOrderHistoryView` — `TotalOrders`, `TotalSpent` + danh sách `CustomerOrderItemView` (kèm tên NV).
 - `OrderSummaryView` — dòng tóm tắt cho màn hình danh sách/tìm kiếm.
+- `ProductSummaryView` — dòng tóm tắt cho màn hình catalogue (kèm `CategoryName` qua JOIN).
 - `BestSellingProductView`, `EmployeeSalesView` — kết quả báo cáo GROUP BY.
+
+> 📄 Phân trang, tìm kiếm theo tên, lọc nhiều tiêu chí và sắp xếp được giải thích riêng ở
+> [06-Pagination-Search.md](06-Pagination-Search.md).
 
 ---
 
 ## C. Query interface — `Application/Queries/*.cs`
 
-- `IOrderQueries`: `GetOrderDetailAsync`, `GetCustomerHistoryAsync`, `SearchAsync` (lọc đa tham số).
-- `IReportQueries`: `GetBestSellingProductsAsync`, `GetEmployeeSalesLeaderboardAsync`.
+- `IOrderQueries`: `GetOrderDetailAsync`, `GetCustomerHistoryAsync`, `SearchAsync` (lọc đa tham số + tìm theo tên + sort + phân trang).
+- `IProductQueries`: `SearchAsync` cho catalogue (tên/loại hàng/khoảng giá/khoảng tồn kho/status + sort + phân trang).
+- `IReportQueries`: `GetBestSellingProductsAsync` (phân trang), `GetEmployeeSalesLeaderboardAsync`.
 
 💡 Tách khỏi `IOrderRepository`: repository = ghi (trả aggregate), queries = đọc (trả read-model).
 Cùng một thực thể "Order" nhưng **hai mô hình khác nhau cho hai mục đích khác nhau**.
@@ -83,10 +88,13 @@ var aEmployee = await Employees.FirstOrDefaultAsync(e => e.Id == aOrder.Employee
 | Method | Trả về | Câu hỏi nó trả lời |
 |--------|--------|---------------------|
 | `GET /api/orders/{id}/view` | `OrderDetailView` | Đơn này của ai, ai bán, gồm món gì, đã trả bao nhiêu |
-| `GET /api/orders?theStatus=&theEmployeeId=…` | `OrderSummaryView[]` | Danh sách/tìm đơn (kèm tên) |
+| `GET /api/orders?theCustomerName=&theStatus=&theSortBy=&thePage=…` | `PagedResult<OrderSummaryView>` | Danh sách/tìm đơn (kèm tên), có phân trang & sort |
+| `GET /api/products/search?theName=&theCategoryId=&theSortBy=&thePage=…` | `PagedResult<ProductSummaryView>` | Tìm/lọc sản phẩm trong catalogue |
 | `GET /api/customers/{id}/orders` | `CustomerOrderHistoryView` | Khách này đã đặt mấy đơn, là những đơn nào |
-| `GET /api/reports/best-selling-products?theTop=` | `BestSellingProductView[]` | Sản phẩm nào bán chạy nhất |
+| `GET /api/reports/best-selling-products?thePage=&thePageSize=` | `PagedResult<BestSellingProductView>` | Sản phẩm nào bán chạy nhất |
 | `GET /api/reports/employee-sales` | `EmployeeSalesView[]` | Nhân viên nào bán nhiều nhất |
+
+> Chi tiết tham số lọc/sort/phân trang: xem [06-Pagination-Search.md](06-Pagination-Search.md).
 
 ---
 

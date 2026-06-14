@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
@@ -128,14 +129,29 @@ internal sealed class MongoOrderQueries : IOrderQueries
             aItems);
     }
 
-    public async Task<IReadOnlyList<OrderSummaryView>> SearchAsync(
+    public async Task<PagedResult<OrderSummaryView>> SearchAsync(
         Guid? theCustomerId = null,
         Guid? theEmployeeId = null,
+        string? theCustomerName = null,
+        string? theEmployeeName = null,
         OrderStatus? theStatus = null,
         DateTime? theFromUtc = null,
         DateTime? theToUtc = null,
+        int thePage = 1,
+        int thePageSize = PageRequest.DefaultPageSize,
+        string? theSortBy = null,
+        bool theSortDescending = false,
         CancellationToken theCancellationToken = default)
     {
+        var aPage = new PageRequest(thePage, thePageSize);
+
+        // Mongo cannot JOIN, so a filter on the customer/employee NAME has to be turned
+        // into a filter on their IDs first: find the matching people, then keep orders
+        // whose CustomerId/EmployeeId is in that set ($in). This keeps the orders query
+        // — and therefore the paging — running on the database.
+        var aCustomerIdFilter = await ResolveCustomerIdsByNameAsync(theCustomerName, theCancellationToken);
+        var aEmployeeIdFilter = await ResolveEmployeeIdsByNameAsync(theEmployeeName, theCancellationToken);
+
         var aQuery = myMongoAppDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus);
 
@@ -147,6 +163,16 @@ internal sealed class MongoOrderQueries : IOrderQueries
         if (theEmployeeId is not null)
         {
             aQuery = aQuery.Where(o => o.EmployeeId == theEmployeeId);
+        }
+
+        if (aCustomerIdFilter is not null)
+        {
+            aQuery = aQuery.Where(o => aCustomerIdFilter.Contains(o.CustomerId));
+        }
+
+        if (aEmployeeIdFilter is not null)
+        {
+            aQuery = aQuery.Where(o => aEmployeeIdFilter.Contains(o.EmployeeId));
         }
 
         if (theStatus is not null)
@@ -165,9 +191,26 @@ internal sealed class MongoOrderQueries : IOrderQueries
             aQuery = aQuery.Where(o => o.OrderDate <= theToUtc);
         }
 
-        var aOrders = await aQuery.ToListAsync(theCancellationToken);
+        // Sort by the order's OWN fields on the database. Sorting by the stitched
+        // customer/employee name would need every matching order loaded first (no JOIN),
+        // so those fall back to the default newest-first — a concrete illustration of how
+        // Mongo's lack of JOIN changes what the same contract can do efficiently.
+        aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+        {
+            "totalamount" => theSortDescending ? aQuery.OrderByDescending(o => o.TotalAmount) : aQuery.OrderBy(o => o.TotalAmount),
+            "orderdate" => theSortDescending ? aQuery.OrderByDescending(o => o.OrderDate) : aQuery.OrderBy(o => o.OrderDate),
+            _ => aQuery.OrderByDescending(o => o.OrderDate)
+        };
 
-        // Stitch customer and employee names in memory.
+        // COUNT the whole filtered set first (so the UI knows the total), then fetch one page.
+        var aTotalCount = await aQuery.CountAsync(theCancellationToken);
+
+        var aOrders = await aQuery
+            .Skip(aPage.Skip)
+            .Take(aPage.PageSize)
+            .ToListAsync(theCancellationToken);
+
+        // Stitch customer and employee names in memory — only for this page's orders.
         var aCustomerIds = aOrders.Select(o => o.CustomerId).Distinct().ToList();
         var aEmployeeIds = aOrders.Select(o => o.EmployeeId).Distinct().ToList();
 
@@ -181,8 +224,7 @@ internal sealed class MongoOrderQueries : IOrderQueries
             .ToListAsync(theCancellationToken))
             .ToDictionary(e => e.Id, e => e.FullName);
 
-        return aOrders
-            .OrderByDescending(o => o.OrderDate)
+        var aItems = aOrders
             .Select(o => new OrderSummaryView(
                 o.Id,
                 aCustomerNameById.TryGetValue(o.CustomerId, out var aCName) ? aCName : "(unknown)",
@@ -191,6 +233,50 @@ internal sealed class MongoOrderQueries : IOrderQueries
                 o.OrderDate,
                 o.TotalAmount,
                 o.TotalCurrency))
+            .ToList();
+
+        return new PagedResult<OrderSummaryView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
+    }
+
+    /// <summary>
+    /// Returns the ids of non-deleted customers whose name contains <paramref name="theName"/>,
+    /// or <c>null</c> when no name filter was supplied (meaning "do not filter by customer name").
+    /// An empty list means "name supplied but nobody matched" — the caller then returns no orders.
+    /// </summary>
+    private async Task<List<Guid>?> ResolveCustomerIdsByNameAsync(string? theName, CancellationToken theCancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(theName))
+        {
+            return null;
+        }
+
+        var aName = theName.Trim();
+        var aCustomers = await myMongoAppDbContext.Customers.AsNoTracking()
+            .Where(c => c.Status != DeletedStatus)
+            .ToListAsync(theCancellationToken);
+
+        return aCustomers
+            .Where(c => c.FullName.Contains(aName, StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Id)
+            .ToList();
+    }
+
+    /// <summary>Same as <see cref="ResolveCustomerIdsByNameAsync"/> but for employees.</summary>
+    private async Task<List<Guid>?> ResolveEmployeeIdsByNameAsync(string? theName, CancellationToken theCancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(theName))
+        {
+            return null;
+        }
+
+        var aName = theName.Trim();
+        var aEmployees = await myMongoAppDbContext.Employees.AsNoTracking()
+            .Where(e => e.Status != DeletedStatus)
+            .ToListAsync(theCancellationToken);
+
+        return aEmployees
+            .Where(e => e.FullName.Contains(aName, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Id)
             .ToList();
     }
 }

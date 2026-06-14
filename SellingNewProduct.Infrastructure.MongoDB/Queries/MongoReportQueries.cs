@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
@@ -25,12 +26,12 @@ internal sealed class MongoReportQueries : IReportQueries
         myMongoAppDbContext = theMongoAppDbContext;
     }
 
-    public async Task<IReadOnlyList<BestSellingProductView>> GetBestSellingProductsAsync(int theTop, CancellationToken theCancellationToken = default)
+    public async Task<PagedResult<BestSellingProductView>> GetBestSellingProductsAsync(
+        int thePage = 1,
+        int thePageSize = 10,
+        CancellationToken theCancellationToken = default)
     {
-        if (theTop <= 0)
-        {
-            theTop = 10;
-        }
+        var aPage = new PageRequest(thePage, thePageSize);
 
         // Count only real sales (Confirmed/Shipped). Details are embedded in the order.
         var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
@@ -47,7 +48,7 @@ internal sealed class MongoReportQueries : IReportQueries
         var aProductById = aProducts.ToDictionary(p => p.Id);
 
         // Group the order lines (flattened from embedded Details) by product — the GROUP BY equivalent.
-        return aOrders
+        var aRanked = aOrders
             .SelectMany(o => o.Details)
             .GroupBy(d => d.ProductId)
             .Select(g =>
@@ -65,8 +66,15 @@ internal sealed class MongoReportQueries : IReportQueries
                     g.Sum(d => d.UnitPriceAmount * d.Quantity));
             })
             .OrderByDescending(v => v.TotalQuantitySold)
-            .Take(theTop)
             .ToList();
+
+        // Mongo grouping happens in memory, so total = the full ranked list; then take one page.
+        var aItems = aRanked
+            .Skip(aPage.Skip)
+            .Take(aPage.PageSize)
+            .ToList();
+
+        return new PagedResult<BestSellingProductView>(aItems, aPage.Page, aPage.PageSize, aRanked.Count);
     }
 
     public async Task<IReadOnlyList<EmployeeSalesView>> GetEmployeeSalesLeaderboardAsync(CancellationToken theCancellationToken = default)

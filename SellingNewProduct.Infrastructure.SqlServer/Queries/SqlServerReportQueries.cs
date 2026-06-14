@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Orders;
@@ -20,12 +21,12 @@ internal sealed class SqlServerReportQueries : IReportQueries
         myAppDbContext = theAppDbContext;
     }
 
-    public async Task<IReadOnlyList<BestSellingProductView>> GetBestSellingProductsAsync(int theTop, CancellationToken theCancellationToken = default)
+    public async Task<PagedResult<BestSellingProductView>> GetBestSellingProductsAsync(
+        int thePage = 1,
+        int thePageSize = 10,
+        CancellationToken theCancellationToken = default)
     {
-        if (theTop <= 0)
-        {
-            theTop = 10;
-        }
+        var aPage = new PageRequest(thePage, thePageSize);
 
         // OrderDetails x Products x Categories x Orders, counting only real sales.
         var aQuery =
@@ -42,10 +43,16 @@ internal sealed class SqlServerReportQueries : IReportQueries
                 g.Sum(x => x.d.Quantity),
                 g.Sum(x => x.d.UnitPriceAmount * x.d.Quantity));
 
-        return await aQuery
+        // Total = number of distinct products sold (i.e. number of GROUP BY buckets).
+        var aTotalCount = await aQuery.CountAsync(theCancellationToken);
+
+        var aItems = await aQuery
             .OrderByDescending(v => v.TotalQuantitySold)
-            .Take(theTop)
+            .Skip(aPage.Skip)
+            .Take(aPage.PageSize)
             .ToListAsync(theCancellationToken);
+
+        return new PagedResult<BestSellingProductView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
     }
 
     public async Task<IReadOnlyList<EmployeeSalesView>> GetEmployeeSalesLeaderboardAsync(CancellationToken theCancellationToken = default)

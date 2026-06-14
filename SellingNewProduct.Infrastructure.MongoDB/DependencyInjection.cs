@@ -33,6 +33,7 @@ public static class DependencyInjection
         theServices.AddScoped<IPaymentRepository, MongoPaymentRepository>();
 
         // Read side (CQRS-lite): Mongo cannot JOIN, so it stitches in memory.
+        theServices.AddScoped<IProductQueries, MongoProductQueries>();
         theServices.AddScoped<IOrderQueries, MongoOrderQueries>();
         theServices.AddScoped<IReportQueries, MongoReportQueries>();
 

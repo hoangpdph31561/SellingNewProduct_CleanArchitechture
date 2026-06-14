@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 
@@ -20,13 +21,17 @@ public sealed class ReportsController : ControllerBase
         myReportQueries = theReportQueries;
     }
 
-    /// <summary>Top N best-selling products (with category name). E.g. <c>GET /api/reports/best-selling-products?theTop=5</c></summary>
+    /// <summary>
+    /// Best-selling products ranked by quantity (with category name), paginated.
+    /// Page 1 is the classic "top N". E.g. <c>GET /api/reports/best-selling-products?thePage=1&amp;thePageSize=5</c>
+    /// </summary>
     [HttpGet("best-selling-products")]
-    public async Task<ActionResult<IReadOnlyList<BestSellingProductView>>> BestSellingProducts(
-        [FromQuery] int theTop = 10,
+    public async Task<ActionResult<PagedResult<BestSellingProductView>>> BestSellingProducts(
+        [FromQuery] int thePage = 1,
+        [FromQuery] int thePageSize = 10,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportQueries.GetBestSellingProductsAsync(theTop, theCancellationToken);
+        var aResult = await myReportQueries.GetBestSellingProductsAsync(thePage, thePageSize, theCancellationToken);
         return Ok(aResult);
     }
 

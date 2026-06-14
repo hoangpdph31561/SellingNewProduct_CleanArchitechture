@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.Queries;
 using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Orders;
@@ -134,14 +135,22 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
             aOrders);
     }
 
-    public async Task<IReadOnlyList<OrderSummaryView>> SearchAsync(
+    public async Task<PagedResult<OrderSummaryView>> SearchAsync(
         Guid? theCustomerId = null,
         Guid? theEmployeeId = null,
+        string? theCustomerName = null,
+        string? theEmployeeName = null,
         OrderStatus? theStatus = null,
         DateTime? theFromUtc = null,
         DateTime? theToUtc = null,
+        int thePage = 1,
+        int thePageSize = PageRequest.DefaultPageSize,
+        string? theSortBy = null,
+        bool theSortDescending = false,
         CancellationToken theCancellationToken = default)
     {
+        var aPage = new PageRequest(thePage, thePageSize);
+
         // Start from a JOIN over three tables, then append filters when a parameter has a value.
         var aQuery =
             from o in myAppDbContext.Orders.AsNoTracking()
@@ -157,6 +166,20 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
         if (theEmployeeId is not null)
         {
             aQuery = aQuery.Where(x => x.o.EmployeeId == theEmployeeId);
+        }
+
+        // Name filters: because we already JOINed Customers/Employees, the names are in
+        // the query — SQL turns these into a LIKE that runs on the database.
+        if (!string.IsNullOrWhiteSpace(theCustomerName))
+        {
+            var aCustomerName = theCustomerName.Trim();
+            aQuery = aQuery.Where(x => x.CustomerName.Contains(aCustomerName));
+        }
+
+        if (!string.IsNullOrWhiteSpace(theEmployeeName))
+        {
+            var aEmployeeName = theEmployeeName.Trim();
+            aQuery = aQuery.Where(x => x.EmployeeName.Contains(aEmployeeName));
         }
 
         if (theStatus is not null)
@@ -175,8 +198,24 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
             aQuery = aQuery.Where(x => x.o.OrderDate <= theToUtc);
         }
 
+        // ORDER BY by a whitelisted column. Default = newest first (OrderDate desc), which
+        // is the natural order for an order list.
+        aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+        {
+            "totalamount" => theSortDescending ? aQuery.OrderByDescending(x => x.o.TotalAmount) : aQuery.OrderBy(x => x.o.TotalAmount),
+            "customername" => theSortDescending ? aQuery.OrderByDescending(x => x.CustomerName) : aQuery.OrderBy(x => x.CustomerName),
+            "employeename" => theSortDescending ? aQuery.OrderByDescending(x => x.EmployeeName) : aQuery.OrderBy(x => x.EmployeeName),
+            "orderdate" => theSortDescending ? aQuery.OrderByDescending(x => x.o.OrderDate) : aQuery.OrderBy(x => x.o.OrderDate),
+            _ => aQuery.OrderByDescending(x => x.o.OrderDate)
+        };
+
+        // COUNT(*) of the filtered set runs on the database (no rows pulled into the app).
+        var aTotalCount = await aQuery.CountAsync(theCancellationToken);
+
+        // Then fetch only this page: ORDER BY ... OFFSET/FETCH is pushed down via Skip/Take.
         var aRows = await aQuery
-            .OrderByDescending(x => x.o.OrderDate)
+            .Skip(aPage.Skip)
+            .Take(aPage.PageSize)
             .Select(x => new
             {
                 x.o.Id,
@@ -189,7 +228,7 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
             })
             .ToListAsync(theCancellationToken);
 
-        return aRows
+        var aItems = aRows
             .Select(r => new OrderSummaryView(
                 r.Id,
                 r.CustomerName,
@@ -199,5 +238,7 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
                 r.TotalAmount,
                 r.TotalCurrency))
             .ToList();
+
+        return new PagedResult<OrderSummaryView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
     }
 }

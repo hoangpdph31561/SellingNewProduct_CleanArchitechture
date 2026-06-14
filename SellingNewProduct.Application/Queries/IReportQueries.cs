@@ -1,3 +1,4 @@
+using SellingNewProduct.Application.Common;
 using SellingNewProduct.Application.ReadModels;
 
 namespace SellingNewProduct.Application.Queries;
@@ -11,10 +12,16 @@ namespace SellingNewProduct.Application.Queries;
 public interface IReportQueries
 {
     /// <summary>
-    /// Top N best-selling products (by quantity sold), including the category name.
-    /// (SQL: JOIN OrderDetails x Products x Categories x Orders, GROUP BY product.)
+    /// Best-selling products ranked by quantity sold (with category name), returned ONE
+    /// page at a time plus the total number of distinct products sold. Page 1 is therefore
+    /// the classic "top N". (SQL: JOIN OrderDetails x Products x Categories x Orders,
+    /// GROUP BY product.) <paramref name="thePage"/> is 1-based; page/pageSize are clamped
+    /// (see <see cref="PageRequest"/>).
     /// </summary>
-    Task<IReadOnlyList<BestSellingProductView>> GetBestSellingProductsAsync(int theTop, CancellationToken theCancellationToken = default);
+    Task<PagedResult<BestSellingProductView>> GetBestSellingProductsAsync(
+        int thePage = 1,
+        int thePageSize = 10,
+        CancellationToken theCancellationToken = default);
 
     /// <summary>
     /// Sales leaderboard per selling employee (total orders + total revenue).

@@ -3,8 +3,8 @@
 > **File này là NGUỒN SỰ THẬT để tiếp tục công việc.**
 > Mở chat mới → bảo Claude đọc file này trước. Sau mỗi bước hoàn thành, tick `[x]`.
 
-Cập nhật lần cuối: 2026-06-13
-Trạng thái tổng thể: **Phase 1-5 + Phase 7 (Read side/Application) XONG. Toàn solution build pass (0 error). Còn lại Phase 6: user tự chạy demo + (tuỳ chọn) seed dữ liệu, unit test.**
+Cập nhật lần cuối: 2026-06-14
+Trạng thái tổng thể: **Phase 1-5 + Phase 7 (Read side/Application) XONG. Toàn solution build pass (0 error). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test) + Phase 8 (read side: pagination, snapshot tên khách — tuỳ chọn).**
 
 ---
 
@@ -117,6 +117,31 @@ dotnet run --project SellingNewProduct.API
 - **Validation theo tầng:** API (FluentValidation, format) · Domain (DomainException, business) · Infra (EF/DB constraint).
 - **Đặt tên biến:** field `my<Type><Name>`, param `the<Type><Name>`, local `a<Type><Name>` (không `_`). Public giữ PascalCase. Xem CONVENTIONS.
 - Lỗi nghiệp vụ: `DomainException` + middleware → ProblemDetails 400.
+
+## Phase 8 — Read side: việc còn mở (tiếp theo nếu cần)
+> Nối tiếp Phase 7. Chưa làm, để dành cho phiên sau.
+- [x] **Phân trang (pagination)** cho `IOrderQueries.SearchAsync` và `IReportQueries.GetBestSellingProductsAsync`
+      (thêm `thePage`/`thePageSize` + trả `PagedResult<T>` có `TotalCount`/`TotalPages`/`HasNext`/`HasPrevious`).
+      - `Application/Common/PagedResult.cs`: record `PagedResult<T>` + struct `PageRequest` (clamp page≥1, pageSize 1..200, mặc định 20) — gom luật phân trang 1 chỗ, dùng chung SQL & Mongo.
+      - SQL: `CountAsync()` + `Skip/Take` đẩy hẳn xuống DB (OFFSET/FETCH) cho cả Search lẫn best-selling (đếm số GROUP BY).
+      - Mongo: Search dùng `Count`+`Skip/Take` ở DB rồi mới ghép tên (chỉ ghép cho trang hiện tại); best-selling group bộ nhớ → total = cả list, `Skip/Take` in-memory.
+      - API: `GET /api/orders?thePage=&thePageSize=` và `GET /api/reports/best-selling-products?thePage=&thePageSize=` trả `PagedResult<T>`.
+- [x] **Tìm kiếm + lọc + sắp xếp nâng cao** (read side, cả SQL & Mongo, đều phân trang):
+      - **Product search MỚI** `IProductQueries.SearchAsync` → `GET /api/products/search`. Lọc: `theName` (contains),
+        `theCategoryId` (loại hàng), `thePriceFrom/thePriceTo` (khoảng giá), `theMinStock/theMaxStock` (khoảng tồn kho),
+        `theStatus` (Active/Inactive; soft-deleted luôn bị loại). Sort `theSortBy` ∈ {name, price, stock} + `theSortDescending`.
+        Read-model mới `ProductSummaryView` (kèm `CategoryName` qua JOIN). SQL đẩy hết WHERE/ORDER BY/OFFSET-FETCH xuống DB;
+        Mongo đẩy các so sánh field xuống DB, còn name-contains + sort + paging làm in-memory (tradeoff đã ghi chú).
+      - **Order search MỞ RỘNG** `IOrderQueries.SearchAsync`: thêm `theCustomerName`/`theEmployeeName` (contains) và
+        sort `theSortBy` ∈ {orderDate, totalAmount, customerName, employeeName} + `theSortDescending`.
+        Mongo: lọc theo tên → resolve ra danh sách Id rồi `$in` (giữ paging chạy ở DB); sort theo tên ghép không khả thi ở Mongo
+        nên fallback orderDate desc (minh hoạ khác biệt do Mongo không JOIN). SQL sort được mọi cột.
+      - DI: đăng ký `IProductQueries` cho cả 2 Infra.
+- [ ] **Ví dụ "snapshot tên khách trên hoá đơn"**: minh hoạ code phân biệt 2 ca — (a) đông cứng tên khách
+      vào Order lúc tạo (yêu cầu nghiệp vụ hoá đơn pháp lý) vs (b) JOIN lấy tên hiện tại để hiển thị (read side).
+      Đây là ranh giới tinh tế giữa "snapshot hợp lệ trong aggregate" và "live reference của read-side".
+- [ ] (Tuỳ chọn) Mongo: thay "nạp + ghép bộ nhớ" bằng aggregation pipeline `$lookup`/`$group` cho báo cáo lớn.
+- [ ] (Tuỳ chọn) Cân nhắc tách read-model ra `*Response` DTO riêng ở API nếu hợp đồng HTTP cần khác read-model.
 
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
 - [ ] Có cần Unit of Work / transaction rõ ràng không? (mặc định: SaveChanges per repo)

@@ -29,7 +29,8 @@ API ─────► Infrastructure.* ─────► Application ───
 
 - **Domain** không reference bất kỳ project nào, không reference EF Core, không biết SQL/Mongo.
 - **Application** chứa **read side** (CQRS-lite): read-model phẳng + interface truy vấn (`IOrderQueries`,
-  `IReportQueries`) để JOIN/báo cáo nhiều bảng. Chỉ ref Domain.
+  `IProductQueries`, `IReportQueries`) để JOIN/báo cáo nhiều bảng, kèm `PagedResult<T>`/`PageRequest`
+  cho phân trang. Chỉ ref Domain.
 - **Infrastructure** triển khai (implement) interface repository của Domain **và** query của Application
   (SQL bằng JOIN thật; Mongo ghép trong bộ nhớ).
 - **API** là *composition root*: chọn đăng ký Infra nào (SqlServer hay Mongo) lúc khởi động.
@@ -43,7 +44,7 @@ API ─────► Infrastructure.* ─────► Application ───
 | Tầng | Chứa gì | Không được chứa |
 |------|---------|-----------------|
 | **Domain** | Entity nghiệp vụ (Order, Customer, Product), Value Object (Money, Email, Address), Aggregate Root, Domain Event, business rule, **interface repository** | EF Core, attribute DB, DTO, JSON |
-| **Application** | **Read-model** phẳng (`OrderDetailView`, `BestSellingProductView`…), **interface query** (`IOrderQueries`, `IReportQueries`) cho việc đọc/báo cáo nhiều bảng | Business rule, EF Core, truy cập DB |
+| **Application** | **Read-model** phẳng (`OrderDetailView`, `ProductSummaryView`, `BestSellingProductView`…), **interface query** (`IOrderQueries`, `IProductQueries`, `IReportQueries`), **phân trang** (`PagedResult<T>`, `PageRequest`) cho việc đọc/tìm kiếm/báo cáo nhiều bảng | Business rule, EF Core, truy cập DB |
 | **Infrastructure.SqlServer** | `DbContext`, persistence model riêng (`*Record`), `IEntityTypeConfiguration`, Repository impl, Mapper Domain↔Record | Logic nghiệp vụ |
 | **Infrastructure.MongoDB** | `DbContext` (provider Mongo), persistence model riêng (`*Document`), Repository impl, Mapper Domain↔Document | Logic nghiệp vụ |
 | **API** | Controller, Request/Response DTO, Validation (FluentValidation), DI/config, mapping DTO↔Domain | Truy cập DB trực tiếp |
@@ -72,5 +73,6 @@ dotnet run --project SellingNewProduct.API
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, code style, package |
 | [docs/code/](docs/code/README.md) | **Giải thích từng file `.cs` và từng method** (cho người học) |
 | [docs/code/05-Application.md](docs/code/05-Application.md) | **Read side / CQRS-lite**: read-model, query JOIN nhiều bảng (SQL vs Mongo) |
+| [docs/code/06-Pagination-Search.md](docs/code/06-Pagination-Search.md) | **Phân trang, tìm kiếm, lọc & sắp xếp**: `PagedResult<T>`, filter, sort (SQL vs Mongo) |
 
 > **Khi mở chat mới:** bảo Claude đọc `docs/ROADMAP.md` trước để biết đã làm tới đâu.
