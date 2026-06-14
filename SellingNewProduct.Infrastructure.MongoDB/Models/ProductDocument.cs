@@ -1,9 +1,8 @@
 namespace SellingNewProduct.Infrastructure.MongoDB.Models;
 
 /// <summary>MongoDB persistence model for Product.</summary>
-internal sealed class ProductDocument
+internal sealed class ProductDocument : BaseDocument
 {
-    public Guid Id { get; set; }
     public string Name { get; set; } = default!;
     public string Sku { get; set; } = default!;
     public string Color { get; set; } = default!;
@@ -12,7 +11,4 @@ internal sealed class ProductDocument
     public string PriceCurrency { get; set; } = default!;
     public int StockQuantity { get; set; }
     public Guid CategoryId { get; set; }
-    public int Status { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-    public DateTime? UpdatedAtUtc { get; set; }
 }

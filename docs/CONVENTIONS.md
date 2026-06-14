@@ -70,6 +70,9 @@ Namespace trùng cấu trúc thư mục.
 
 ## 7. Quy ước Infrastructure
 - Persistence model đặt hậu tố theo DB: `*Record` (SQL), `*Document` (Mongo).
+- Field chung (`Id, Status, CreatedAtUtc, UpdatedAtUtc`) gom vào lớp cơ sở `abstract`: `BaseRecord`
+  (SQL) / `BaseDocument` (Mongo). Mỗi model kế thừa rồi chỉ khai báo phần riêng. Lớp base KHÔNG là
+  entity (không `DbSet`) nên EF không tạo mapping kế thừa — chỉ rải cột chung vào từng bảng.
 - Repository: `internal sealed`, implement interface của Domain.
 - Mỗi Infra có `DependencyInjection.cs` với `AddXxxInfrastructure(IServiceCollection, IConfiguration)`.
 - **Cấu hình schema bằng Fluent API trong class `IEntityTypeConfiguration<T>` riêng — TUYỆT ĐỐI

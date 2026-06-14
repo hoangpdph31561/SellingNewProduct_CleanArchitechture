@@ -15,3 +15,5 @@ public sealed record CustomerResponse(
     AddressDto Address,
     Guid? UserId,
     string Status);
+
+public sealed record DeleteCustomerRequest(Guid Id);

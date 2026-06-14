@@ -17,15 +17,18 @@ public sealed class CustomersController : ControllerBase
     private readonly ICustomerRepository myCustomerRepository;
     private readonly IOrderQueries myOrderQueries;
     private readonly IValidator<CreateCustomerRequest> myCreateValidator;
+    private readonly IValidator<DeleteCustomerRequest> myDeleteValidator;
 
     public CustomersController(
         ICustomerRepository theCustomerRepository,
         IOrderQueries theOrderQueries,
-        IValidator<CreateCustomerRequest> theCreateValidator)
+        IValidator<CreateCustomerRequest> theCreateValidator,
+        IValidator<DeleteCustomerRequest> theDeleteValidator)
     {
         myCustomerRepository = theCustomerRepository;
         myOrderQueries = theOrderQueries;
         myCreateValidator = theCreateValidator;
+        myDeleteValidator = theDeleteValidator;
     }
 
     [HttpGet]
@@ -75,5 +78,13 @@ public sealed class CustomersController : ControllerBase
         await myCustomerRepository.AddAsync(aCustomer, theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aCustomer.Id }, aCustomer.ToResponse());
+    }
+
+    [HttpDelete]
+    public async Task<ActionResult> Delete(DeleteCustomerRequest theRequest, CancellationToken theCancellationToken)
+    {
+        await myDeleteValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
+        await myCustomerRepository.DeleteAsync(theRequest.Id, theCancellationToken);
+        return NoContent();
     }
 }

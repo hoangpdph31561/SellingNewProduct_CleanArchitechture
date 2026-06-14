@@ -55,4 +55,19 @@ internal sealed class MongoCustomerRepository : ICustomerRepository
         CustomerMapper.MapInto(aDocument, theCustomer);
         await myMongoAppDbContext.SaveChangesAsync(theCancellationToken);
     }
+
+    public async Task DeleteAsync(Guid theId, CancellationToken theCancellationToken = default)
+    {
+        var aDocument = await myMongoAppDbContext.Customers.FirstOrDefaultAsync(r => r.Id == theId, theCancellationToken);
+
+        if (aDocument is null)
+        {
+            return;
+        }
+
+        var aDomain = CustomerMapper.ToDomain(aDocument);
+        aDomain.Delete();
+        CustomerMapper.MapInto(aDocument, aDomain);
+        await myMongoAppDbContext.SaveChangesAsync(theCancellationToken);
+    }
 }

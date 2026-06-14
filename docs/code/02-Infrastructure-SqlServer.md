@@ -19,6 +19,23 @@ database; Domain thì không. Luồng: `Domain entity ⇄ (mapper tay) ⇄ *Reco
 Danh sách: `UserRecord, CustomerRecord, EmployeeRecord, CategoryRecord, ProductRecord, OrderRecord,
 OrderDetailRecord, PaymentRecord`.
 
+### 💡 Lớp cơ sở chung — `Models/BaseRecord.cs`
+Mọi record đều có chung 4 cột (đúng bộ field của `BaseEntity<TId>` ở Domain), nên được gom vào một
+lớp `internal abstract class BaseRecord`:
+
+| Cột | Kiểu | Ý nghĩa |
+|-----|------|---------|
+| `Id` | `Guid` | Khóa chính |
+| `Status` | `int` | Vòng đời / xóa mềm (map từ enum `EntityStatus`) |
+| `CreatedAtUtc` | `DateTime` | Mốc tạo (audit) |
+| `UpdatedAtUtc` | `DateTime?` | Mốc cập nhật gần nhất (audit) |
+
+Mỗi record `: BaseRecord` rồi chỉ khai báo phần **riêng** của mình → bớt lặp, đồng nhất với Domain.
+- 💡 `BaseRecord` **không phải entity**: không có `DbSet`, không bị navigation nào trỏ tới. Nên EF Core
+  **không** coi đây là kế thừa TPH — nó chỉ "rải" 4 cột này vào từng bảng riêng. Schema y hệt trước,
+  **không phát sinh migration mới**.
+- Bên Mongo có lớp song song `BaseDocument` (xem file 03).
+
 💡 Đáng chú ý: **`OrderRecord` có `List<OrderDetailRecord> Details`** — trong SQL, Order tách thành
 2 bảng `Orders` + `OrderDetails` (quan hệ 1-n). (Mongo sẽ làm khác — xem file 03.)
 

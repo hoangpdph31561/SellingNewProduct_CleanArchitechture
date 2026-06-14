@@ -21,6 +21,13 @@ vào một tài liệu. Domain `Order` (giữ `List<OrderDetail>`) không quan t
 
 Các document còn lại (`UserDocument, CustomerDocument, ...`) gần như y hệt record tương ứng.
 
+### 💡 Lớp cơ sở chung — `Models/BaseDocument.cs`
+Song song với `BaseRecord` bên SQL (file 02): một `internal abstract class BaseDocument` gom 4 field
+chung `Id, Status, CreatedAtUtc, UpdatedAtUtc`. Mọi document `: BaseDocument`, kể cả
+`OrderDetailDocument` nhúng bên trong order.
+- Đặt tên `BaseDocument` (không phải `BaseRecord`) để khớp quy ước hậu tố `*Document` của tầng Mongo.
+- Field `Id` vẫn được map sang `_id` theo quy ước, không đổi gì.
+
 ---
 
 ## B. Cấu hình — `Configurations/MongoConfigurations.cs`

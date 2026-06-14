@@ -50,6 +50,14 @@ public sealed class CreateCustomerRequestValidator : AbstractValidator<CreateCus
     }
 }
 
+public sealed class  DeleteCustoomerRequestValidator : AbstractValidator<DeleteCustomerRequest>
+{
+    public DeleteCustoomerRequestValidator()
+    {
+        RuleFor(x => x.Id).NotEmpty();
+    }
+}
+
 public sealed class CreateUserRequestValidator : AbstractValidator<CreateUserRequest>
 {
     public CreateUserRequestValidator()

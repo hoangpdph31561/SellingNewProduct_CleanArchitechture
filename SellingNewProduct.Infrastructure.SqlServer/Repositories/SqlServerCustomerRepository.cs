@@ -48,4 +48,17 @@ internal sealed class SqlServerCustomerRepository : ICustomerRepository
         CustomerMapper.MapInto(aRecord, theCustomer);
         await myAppDbContext.SaveChangesAsync(theCancellationToken);
     }
+
+    public async Task DeleteAsync(Guid theId, CancellationToken theCancellationToken = default)
+    {
+        var aRecord = await myAppDbContext.Customers.FirstOrDefaultAsync(r => r.Id == theId, theCancellationToken);
+        if (aRecord == null)
+        {
+            return;
+        }
+        var aDomain = CustomerMapper.ToDomain(aRecord);
+        aDomain.Delete();
+        CustomerMapper.MapInto(aRecord, aDomain);
+        await myAppDbContext.SaveChangesAsync(theCancellationToken);
+    }
 }

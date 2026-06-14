@@ -1,9 +1,8 @@
 namespace SellingNewProduct.Infrastructure.MongoDB.Models;
 
 /// <summary>MongoDB persistence model for Customer.</summary>
-internal sealed class CustomerDocument
+internal sealed class CustomerDocument : BaseDocument
 {
-    public Guid Id { get; set; }
     public string FullName { get; set; } = default!;
     public string Email { get; set; } = default!;
     public string PhoneNumber { get; set; } = default!;
@@ -13,7 +12,4 @@ internal sealed class CustomerDocument
     public string City { get; set; } = default!;
     public string Country { get; set; } = default!;
     public Guid? UserId { get; set; }
-    public int Status { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-    public DateTime? UpdatedAtUtc { get; set; }
 }
