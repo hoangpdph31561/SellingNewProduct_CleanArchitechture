@@ -45,23 +45,18 @@ không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là �
             │                         │
             └────────────┬────────────┘
                          ▼
-            ┌──────────────────────────┐
-            │       Application         │   ← read side (CQRS-lite)
-            │  ReadModel (View) ·       │
-            │  IOrderQueries ·          │
-            │  IReportQueries           │
-            └────────────┬─────────────┘
-                         ▼
-            ┌──────────────────────────┐
-            │          Domain           │
-            │  Entity · ValueObject ·   │
-            │  AggregateRoot · Event ·  │
-            │  IRepository (interface)  │
-            └──────────────────────────┘
+            ┌──────────────────────────────────────┐
+            │              Domain                    │
+            │  Entity · ValueObject · AggregateRoot │
+            │  Event · IRepository (interface)      │
+            │  Domain Service (I*Service) ← write   │
+            │  IQueries + ReadModel (View) ← read   │
+            └──────────────────────────────────────┘
 ```
 
 **Quy tắc vàng:** Mũi tên chỉ vào trong. Domain ở trung tâm, không có mũi tên nào đi ra khỏi nó.
-Application nằm sát Domain (chỉ ref Domain); Infrastructure & API đều thấy được Application.
+Chỉ có **3 tầng**: API → (Domain) ← Infrastructure. Cả write side (Domain Service) lẫn read side
+(IQueries + ReadModel) đều nằm trong Domain; Infrastructure implement cả hai.
 
 ## 3. Vì sao tách persistence model khỏi domain entity?
 
@@ -85,20 +80,23 @@ HTTP POST /api/orders
    │
    ▼
 [API] OrdersController nhận CreateOrderRequest (DTO)
-   │  → FluentValidation kiểm tra format request
+   │  → FluentValidation kiểm tra FORMAT request (không trống, độ dài…)
+   │  → gọi IOrderService.CreateAsync(...) — KHÔNG đụng repository, KHÔNG new entity
    ▼
-[API] Map DTO → gọi use case / repository
-   │
-   ▼
-[Domain] Order.Create(...) chạy business rule (vd: phải có ít nhất 1 item)
-   │  → sinh Domain Event nếu cần
+[Domain] OrderService: business logic (vd: Customer/Employee phải tồn tại)
+   │  → Order.Create(...) chạy invariant của aggregate, sinh Domain Event nếu cần
+   │  → gọi IOrderRepository.AddAsync(order)
    ▼
 [Infrastructure] IOrderRepository.AddAsync(order)
    │  → Mapper: Order (domain) → OrderRecord/OrderDocument
    │  → DbContext.SaveChanges()  (EF Core: SQL Server hoặc Mongo provider)
    ▼
+[Domain] service trả Order về lại API
+   ▼
 [API] Map Order → OrderResponse (DTO) → trả 201 Created
 ```
+
+→ Xem thêm mục **9. Domain Service** bên dưới.
 
 ## 5. Interface nằm ở đâu? (Dependency Inversion)
 
@@ -154,15 +152,16 @@ Vậy khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mu
 
 | | Write side | Read side |
 |---|---|---|
-| Hợp đồng | `IOrderRepository` (Domain) | `IOrderQueries`, `IReportQueries` (Application) |
+| Hợp đồng | `IOrderRepository` + `IOrderService` (Domain) | `IOrderQueries`, `IReportQueries` (Domain) |
 | Trả về | Aggregate `Order` | Read-model phẳng (`OrderDetailView`…) |
 | Mục đích | Chạy business rule | Hiển thị / báo cáo nhanh |
 | Ghép nhiều bảng | ❌ (vỡ ranh giới aggregate) | ✅ JOIN/GROUP BY |
 
-**Vì sao read-model nằm ở Application, không ở Domain hay API?**
-- Không ở **Domain**: read-model không phải business rule, đưa vào sẽ làm Domain phình & bẩn.
-- Không ở **API**: Infrastructure phải *return* kiểu này khi implement query, mà Infra **không** ref API
-  (ngược chiều mũi tên). Application là tầng cả Infra lẫn API đều thấy → đặt ở đây là hợp lệ.
+**Read-model đặt ở đâu?** Dự án gộp về **3 tầng** (không có Application), nên cả interface query
+(`IOrderQueries`) lẫn read-model (`OrderDetailView`) đều nằm trong **Domain** (`Domain/Queries`,
+`Domain/ReadModels`); Infrastructure implement query. Đánh đổi: Domain "rộng" hơn (ôm cả read-model
+hiển thị) để giữ đúng 3 tầng API → Domain ← Infrastructure. Read-model vẫn là kiểu chỉ-đọc, tách bạch
+với aggregate (không trộn vào entity nghiệp vụ).
 
 **Mỗi Infrastructure tự chọn chiến lược thực thi cùng một interface:**
 - SQL Server: LINQ `join` → EF Core dịch thành **một câu SQL JOIN** chạy trên DB.
@@ -173,11 +172,11 @@ Vậy khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mu
 ## 7c. Phân trang, tìm kiếm, lọc & sắp xếp (cũng là read side)
 
 Danh sách thật luôn cần **phân trang** (đừng trả cả bảng), **tìm kiếm/lọc** nhiều tiêu chí và
-**sắp xếp**. Đây vẫn là *cách đọc*, không phải business → đặt ở **Application** (`PagedResult<T>`,
-`PageRequest`, các tham số lọc trên interface query) + **Infrastructure** (cách thực thi).
+**sắp xếp**. Đây vẫn là *cách đọc* → hợp đồng đặt ở **Domain** (`PagedResult<T>`, `PageRequest`,
+interface query) + cách thực thi ở **Infrastructure**.
 
-- **Application**: `PagedResult<T>` (dữ liệu 1 trang + `TotalCount`/`TotalPages`/`HasNext`), `PageRequest`
-  (kẹp page/pageSize ở một chỗ), và interface `IProductQueries`/`IOrderQueries` nhận filter + `sortBy`/`sortDescending`.
+- **Domain**: `PagedResult<T>` (dữ liệu 1 trang + `TotalCount`/`TotalPages`/`HasNext`) và `PageRequest`
+  nằm trong `Domain/Common`; interface `IProductQueries`/`IOrderQueries` (`Domain/Queries`) nhận filter + `sortBy`/`sortDescending`.
 - **SQL Server**: đẩy hết `WHERE`/`ORDER BY`/`COUNT`/`OFFSET-FETCH` xuống DB; tên hiển thị lấy bằng JOIN.
 - **MongoDB**: đẩy phần làm được xuống DB; tìm theo tên cross-collection thì *resolve Id trước rồi `$in`*;
   phần không JOIN được (vd sort theo tên ghép) xử lý/giới hạn ở bộ nhớ — một minh hoạ cho khác biệt thực thi.
@@ -186,6 +185,37 @@ Danh sách thật luôn cần **phân trang** (đừng trả cả bảng), **tì
 
 ## 8. Xử lý lỗi nghiệp vụ
 
-Domain ném `DomainException` (hoặc dùng Result pattern) khi vi phạm invariant.
-API bắt và chuyển thành response chuẩn (ProblemDetails / 400). Xem ROADMAP để biết
-ta chọn cách nào (mặc định đề xuất: **DomainException + middleware** cho đơn giản khi học).
+Domain ném exception, API có middleware chuyển thành ProblemDetails chuẩn:
+
+| Exception (Domain) | HTTP | Khi nào |
+|---|---|---|
+| `DomainException` | 400 | Vi phạm invariant / business rule (vd: tên category trùng) |
+| `NotFoundException` | 404 | Tham chiếu tới entity không tồn tại (vd: tạo Product với CategoryId sai) |
+| `ValidationException` (FluentValidation, ở API) | 400 | Sai FORMAT request (trống, độ dài…) |
+
+→ `ExceptionHandlingMiddleware` bắt theo thứ tự này. Controller không cần `try/catch` hay tự trả 404
+cho entity liên quan — service ném, middleware lo phần còn lại.
+
+## 9. Domain Service — API gọi behavior, không gọi repository
+
+Controller **không** được tự `new`/`Entity.Create()` rồi gọi repository. Logic ghi (kể cả các
+kiểm tra cần truy vấn DB như "tên không trùng", "entity liên quan phải tồn tại") nằm trong
+**Domain Service**.
+
+```
+API (validate format)  →  I*Service (Domain: business logic)  →  I*Repository (Domain interface)
+                                                                      ↑ Infrastructure implement
+```
+
+- Mỗi module có `I*Service` (public — thứ DUY NHẤT API thấy) + `*Service` (internal — chứa logic).
+- Service phối hợp aggregate + repository, ném `DomainException`/`NotFoundException` khi vi phạm.
+- Domain tự đăng ký service qua `AddDomainServices()` (`Domain/DependencyInjection.cs`); nhờ vậy
+  `*Service` để `internal` mà API vẫn dùng qua interface. `Program.cs` gọi `AddDomainServices()`.
+- Phụ thuộc kỹ thuật cần thiết: Domain ref `Microsoft.Extensions.DependencyInjection.Abstractions`
+  (chỉ là contract `IServiceCollection`, không kéo theo hạ tầng).
+- Ví dụ ngoại lệ hướng phụ thuộc: `IPasswordHasher` khai báo ở Domain (`Domain/Users`), API implement
+  (`PasswordHasher`) và đăng ký DI — Domain định nghĩa hợp đồng, tầng ngoài cắm vào.
+
+> Lưu ý quan niệm: "API gọi Domain" nghĩa là API **phụ thuộc** vào abstraction của Domain. Đổi *chữ ký
+> behavior* thì nơi gọi phải đổi (kiến trúc nào cũng vậy). Clean Architecture chỉ bảo đảm: đổi *chi tiết
+> hạ tầng/DB* không lan vào trong — không phải "đổi Domain mà API vô can".

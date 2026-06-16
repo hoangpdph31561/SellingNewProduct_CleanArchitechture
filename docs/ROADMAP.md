@@ -3,8 +3,13 @@
 > **File này là NGUỒN SỰ THẬT để tiếp tục công việc.**
 > Mở chat mới → bảo Claude đọc file này trước. Sau mỗi bước hoàn thành, tick `[x]`.
 
-Cập nhật lần cuối: 2026-06-14
-Trạng thái tổng thể: **Phase 1-5 + Phase 7 (Read side/Application) XONG. Toàn solution build pass (0 error). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test) + Phase 8 (read side: pagination, snapshot tên khách — tuỳ chọn).**
+Cập nhật lần cuối: 2026-06-16
+Trạng thái tổng thể: **Phase 1-5 + 7 XONG. Phase 9 (refactor 3 tầng + Domain Service) XONG. Toàn solution build pass (0 error). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test).**
+
+> ⚠️ **Cập nhật kiến trúc (2026-06-16) — xem Phase 9 cuối file:** Đã **bỏ project Application**, gộp read
+> side vào **Domain**. Đã thêm **Domain Service** (`I*Service`) cho cả 7 module — API gọi service, KHÔNG
+> gọi repository trực tiếp. Còn **3 tầng**: API · Domain · Infrastructure. Các mô tả "Application" / "5 project"
+> bên dưới (Phase 7) là LỊCH SỬ, không còn đúng hiện trạng.
 
 ---
 
@@ -142,6 +147,23 @@ dotnet run --project SellingNewProduct.API
       Đây là ranh giới tinh tế giữa "snapshot hợp lệ trong aggregate" và "live reference của read-side".
 - [ ] (Tuỳ chọn) Mongo: thay "nạp + ghép bộ nhớ" bằng aggregation pipeline `$lookup`/`$group` cho báo cáo lớn.
 - [ ] (Tuỳ chọn) Cân nhắc tách read-model ra `*Response` DTO riêng ở API nếu hợp đồng HTTP cần khác read-model.
+
+## Phase 9 — Gộp 3 tầng + Domain Service ✅ (2026-06-16)
+> Theo review: API không được gọi repository / `new` entity; logic nghiệp vụ phải nằm dưới API; chỉ 3 tầng.
+- [x] **Bỏ project `Application`**: chuyển read side vào Domain — `PagedResult`/`PageRequest` → `Domain/Common`;
+      `I*Queries` → `Domain/Queries`; read-model `*View` → `Domain/ReadModels`. Gỡ ProjectReference + khỏi `.slnx`.
+- [x] **Domain Service cho cả 7 module** (`I*Service` public + `*Service` internal): Category (check trùng tên),
+      Product/Employee/Order/Payment (existence check entity liên quan), Customer, User. Đăng ký qua `AddDomainServices()`
+      (`Domain/DependencyInjection.cs`); Domain thêm package `Microsoft.Extensions.DependencyInjection.Abstractions`.
+- [x] **`NotFoundException`** (`Domain/Common`) → middleware map **404** (tách khỏi `DomainException` → 400).
+- [x] **`IPasswordHasher`** khai báo ở `Domain/Users`, `PasswordHasher` (API) implement + đăng ký DI.
+- [x] **7 controller** chỉ inject `I*Service` (+ `I*Queries` cho endpoint đọc) + validator; bỏ repository & `new` entity.
+- [x] **Tổ chức lại folder Domain theo loại**: `Abstractions/` (I*Service + I*Queries + IPasswordHasher),
+      `Services/` (impl internal), `Repositories/`, `ReadModels/`; folder aggregate (Categories/, Orders/…) chỉ còn entity.
+- [x] `dotnet build` PASS (0 error, 0 warning). Docs cập nhật (README, ARCHITECTURE, CONVENTIONS, code/01,04,05, README index).
+- Ghi nhớ: comment trong code = tiếng Anh; tài liệu Markdown = tiếng Việt.
+- **Đã chốt với user (giữ nguyên, KHÔNG đổi):** repository interface ở Domain (không xuống Infra — DIP);
+  giữ ReadModels + IQueries (read side); aggregate tham chiếu nhau bằng Id, không ôm List aggregate khác.
 
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
 - [ ] Có cần Unit of Work / transaction rõ ràng không? (mặc định: SaveChanges per repo)

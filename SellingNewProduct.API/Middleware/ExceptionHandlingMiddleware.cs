@@ -1,13 +1,19 @@
+using System.Net;
 using FluentValidation;
-using Microsoft.AspNetCore.Mvc;
+using SellingNewProduct.API.Contracts;
 using SellingNewProduct.Domain.Common;
 
 namespace SellingNewProduct.API.Middleware;
 
 /// <summary>
-/// Translates exceptions into RFC7807 ProblemDetails:
-/// - FluentValidation (API-level format errors) and DomainException (business
-///   rule violations) both become 400.
+/// Translates exceptions into the standard <see cref="ApiResponse"/> error envelope and the
+/// matching HTTP status code. This is the ONLY place that knows the HTTP status for each
+/// (HTTP-free) domain exception type:
+/// - FluentValidation (request-shape errors) and <see cref="DomainException"/> (business
+///   rule violations) → 400.
+/// - <see cref="ConflictException"/> (uniqueness / state conflict) → 409.
+/// - <see cref="NotFoundException"/> (referenced entity missing) → 404.
+/// - anything else → 500.
 /// </summary>
 internal sealed class ExceptionHandlingMiddleware
 {
@@ -28,34 +34,42 @@ internal sealed class ExceptionHandlingMiddleware
         }
         catch (ValidationException aValidationException)
         {
-            await WriteProblemAsync(theContext, StatusCodes.Status400BadRequest,
-                "Validation failed",
-                string.Join(" | ", aValidationException.Errors.Select(e => e.ErrorMessage)));
+            // One entry per failed rule so the client can show them all.
+            await WriteAsync(theContext, HttpStatusCode.BadRequest,
+                aValidationException.Errors.Select(e => e.ErrorMessage));
+        }
+        catch (NotFoundException aNotFoundException)
+        {
+            await WriteAsync(theContext, HttpStatusCode.NotFound, new[] { aNotFoundException.Message });
+        }
+        catch (ConflictException aConflictException)
+        {
+            await WriteAsync(theContext, HttpStatusCode.Conflict, new[] { aConflictException.Message });
         }
         catch (DomainException aDomainException)
         {
-            await WriteProblemAsync(theContext, StatusCodes.Status400BadRequest,
-                "Business rule violated", aDomainException.Message);
+            await WriteAsync(theContext, HttpStatusCode.BadRequest, new[] { aDomainException.Message });
         }
         catch (Exception aException)
         {
             myLogger.LogError(aException, "Unhandled exception");
-            await WriteProblemAsync(theContext, StatusCodes.Status500InternalServerError,
-                "Unexpected error", "An unexpected error occurred.");
+            await WriteAsync(theContext, HttpStatusCode.InternalServerError,
+                new[] { "An unexpected error occurred." });
         }
     }
 
-    private static async Task WriteProblemAsync(HttpContext theContext, int theStatusCode, string theTitle, string theDetail)
+    private static async Task WriteAsync(HttpContext theContext, HttpStatusCode theStatusCode, IEnumerable<string> theErrors)
     {
-        var aProblem = new ProblemDetails
+        var aResponse = new ApiResponse
         {
-            Status = theStatusCode,
-            Title = theTitle,
-            Detail = theDetail
+            StatusCode = theStatusCode,
+            IsSuccess = false,
+            ErrorMessages = theErrors.ToList(),
+            Result = null
         };
 
-        theContext.Response.StatusCode = theStatusCode;
-        theContext.Response.ContentType = "application/problem+json";
-        await theContext.Response.WriteAsJsonAsync(aProblem);
+        theContext.Response.StatusCode = (int)theStatusCode;
+        theContext.Response.ContentType = "application/json";
+        await theContext.Response.WriteAsJsonAsync(aResponse);
     }
 }

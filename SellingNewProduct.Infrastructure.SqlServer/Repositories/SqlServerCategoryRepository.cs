@@ -30,6 +30,14 @@ internal sealed class SqlServerCategoryRepository : ICategoryRepository
         return aRecords.Select(CategoryMapper.ToDomain).ToList();
     }
 
+    public async Task<bool> ExistsByNameAsync(string theName, CancellationToken theCancellationToken = default)
+    {
+        // The soft-delete query filter already excludes Deleted rows.
+        return await myAppDbContext.Categories
+            .AsNoTracking()
+            .AnyAsync(r => r.Name == theName, theCancellationToken);
+    }
+
     public async Task AddAsync(Category theCategory, CancellationToken theCancellationToken = default)
     {
         myAppDbContext.Categories.Add(CategoryMapper.ToRecord(theCategory));

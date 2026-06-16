@@ -1,8 +1,8 @@
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 
-namespace SellingNewProduct.Application.Queries;
+namespace SellingNewProduct.Domain.Abstractions;
 
 /// <summary>
 /// Read side for the product catalogue — a list/search screen, separate from
@@ -18,29 +18,26 @@ namespace SellingNewProduct.Application.Queries;
 public interface IProductQueries
 {
     /// <summary>
+    /// One enriched product row (with the category name) for display, or <c>null</c> if
+    /// not found. The flat read-side counterpart of the repository's <c>GetByIdAsync</c>,
+    /// which returns the full aggregate.
+    /// </summary>
+    Task<ProductSummaryView?> GetByIdAsync(Guid theProductId, CancellationToken theCancellationToken = default);
+
+    /// <summary>
     /// Search/filter the catalogue. Every filter is optional (null = no filter):
     /// <list type="bullet">
     /// <item><paramref name="theName"/>: case-insensitive "contains" on the product name.</item>
-    /// <item><paramref name="theCategoryId"/>: loại hàng (category).</item>
+    /// <item><paramref name="theCategoryId"/>: product category.</item>
     /// <item><paramref name="thePriceFrom"/>/<paramref name="thePriceTo"/>: price range.</item>
     /// <item><paramref name="theMinStock"/>/<paramref name="theMaxStock"/>: stock-quantity range
     /// (e.g. low-stock = maxStock 5; in-stock = minStock 1).</item>
     /// <item><paramref name="theStatus"/>: Active/Inactive. Soft-deleted rows are never returned.</item>
     /// </list>
-    /// <paramref name="theSortBy"/> accepts <c>name</c>, <c>price</c> or <c>stock</c>
+    /// <paramref name="theQuery"/>.SortBy accepts <c>name</c>, <c>price</c> or <c>stock</c>
     /// (default <c>name</c>). Returns one page plus the total matching count.
     /// </summary>
     Task<PagedResult<ProductSummaryView>> SearchAsync(
-        string? theName = null,
-        Guid? theCategoryId = null,
-        decimal? thePriceFrom = null,
-        decimal? thePriceTo = null,
-        int? theMinStock = null,
-        int? theMaxStock = null,
-        EntityStatus? theStatus = null,
-        int thePage = 1,
-        int thePageSize = PageRequest.DefaultPageSize,
-        string? theSortBy = null,
-        bool theSortDescending = false,
+        ProductSearchQuery theQuery,
         CancellationToken theCancellationToken = default);
 }

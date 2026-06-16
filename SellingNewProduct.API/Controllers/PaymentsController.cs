@@ -2,9 +2,10 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.Domain.Payments;
-using SellingNewProduct.Domain.Repositories;
-using SellingNewProduct.Domain.ValueObjects;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 
 namespace SellingNewProduct.API.Controllers;
 
@@ -12,25 +13,53 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class PaymentsController : ControllerBase
 {
-    private readonly IPaymentRepository myPaymentRepository;
-    private readonly IOrderRepository myOrderRepository;
+    private readonly IPaymentService myPaymentService;
+    private readonly IPaymentQueries myPaymentQueries;
     private readonly IValidator<CreatePaymentRequest> myCreateValidator;
 
     public PaymentsController(
-        IPaymentRepository thePaymentRepository,
-        IOrderRepository theOrderRepository,
+        IPaymentService thePaymentService,
+        IPaymentQueries thePaymentQueries,
         IValidator<CreatePaymentRequest> theCreateValidator)
     {
-        myPaymentRepository = thePaymentRepository;
-        myOrderRepository = theOrderRepository;
+        myPaymentService = thePaymentService;
+        myPaymentQueries = thePaymentQueries;
         myCreateValidator = theCreateValidator;
     }
 
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<PaymentResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aPayment = await myPaymentRepository.GetByIdAsync(theId, theCancellationToken);
+        var aPayment = await myPaymentService.GetByIdAsync(theId, theCancellationToken);
         return aPayment is null ? NotFound() : Ok(aPayment.ToResponse());
+    }
+
+    /// <summary>
+    /// Search/filter payments (read side). Every filter is optional: by order id, method,
+    /// status and a created-date range; sort by date/amount.
+    /// <c>GET /api/payments/search?theStatus=Completed&amp;theSortBy=amount&amp;theSortDescending=true</c>
+    /// </summary>
+    [HttpGet("search")]
+    public async Task<ActionResult<PagedResult<PaymentSummaryView>>> Search(
+        [FromQuery] PaymentSearchQuery theQuery,
+        CancellationToken theCancellationToken = default)
+    {
+        var aResult = await myPaymentQueries.SearchAsync(theQuery, theCancellationToken);
+        return Ok(aResult);
+    }
+
+    /// <summary>
+    /// Orders that still owe money (total minus completed payments), biggest balance first.
+    /// <c>GET /api/payments/outstanding-orders?thePage=1&amp;thePageSize=20</c>
+    /// </summary>
+    [HttpGet("outstanding-orders")]
+    public async Task<ActionResult<PagedResult<OutstandingOrderView>>> OutstandingOrders(
+        [FromQuery] int thePage = 1,
+        [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
+        CancellationToken theCancellationToken = default)
+    {
+        var aResult = await myPaymentQueries.GetOutstandingOrdersAsync(thePage, thePageSize, theCancellationToken);
+        return Ok(aResult);
     }
 
     [HttpPost]
@@ -38,18 +67,7 @@ public sealed class PaymentsController : ControllerBase
     {
         await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
 
-        var aOrder = await myOrderRepository.GetByIdAsync(theRequest.OrderId, theCancellationToken);
-        if (aOrder is null)
-        {
-            return NotFound($"Order '{theRequest.OrderId}' not found.");
-        }
-
-        var aPayment = Payment.Create(
-            theRequest.OrderId,
-            Money.Create(theRequest.Amount, theRequest.Currency),
-            (PaymentMethod)theRequest.Method);
-
-        await myPaymentRepository.AddAsync(aPayment, theCancellationToken);
+        var aPayment = await myPaymentService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aPayment.Id }, aPayment.ToResponse());
     }
@@ -57,15 +75,7 @@ public sealed class PaymentsController : ControllerBase
     [HttpPost("{theId:guid}/complete")]
     public async Task<ActionResult<PaymentResponse>> Complete(Guid theId, CancellationToken theCancellationToken)
     {
-        var aPayment = await myPaymentRepository.GetByIdAsync(theId, theCancellationToken);
-        if (aPayment is null)
-        {
-            return NotFound();
-        }
-
-        aPayment.MarkCompleted();
-        await myPaymentRepository.UpdateAsync(aPayment, theCancellationToken);
-
+        var aPayment = await myPaymentService.CompleteAsync(theId, theCancellationToken);
         return Ok(aPayment.ToResponse());
     }
 }

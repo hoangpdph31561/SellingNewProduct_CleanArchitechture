@@ -37,6 +37,14 @@ internal sealed class MongoCategoryRepository : ICategoryRepository
         return aDocuments.Select(CategoryMapper.ToDomain).ToList();
     }
 
+    public async Task<bool> ExistsByNameAsync(string theName, CancellationToken theCancellationToken = default)
+    {
+        // Mongo has no global query filter, so exclude soft-deleted rows here.
+        return await myMongoAppDbContext.Categories
+            .AsNoTracking()
+            .AnyAsync(r => r.Name == theName && r.Status != DeletedStatus, theCancellationToken);
+    }
+
     public async Task AddAsync(Category theCategory, CancellationToken theCancellationToken = default)
     {
         myMongoAppDbContext.Categories.Add(CategoryMapper.ToDocument(theCategory));

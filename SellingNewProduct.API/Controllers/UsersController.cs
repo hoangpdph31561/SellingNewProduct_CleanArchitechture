@@ -2,11 +2,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.API.Security;
-using SellingNewProduct.Domain.Repositories;
-using SellingNewProduct.Domain.Users;
-using SellingNewProduct.Domain.ValueObjects;
-using DomainUser = SellingNewProduct.Domain.Users.User;
+using SellingNewProduct.Domain.Abstractions;
 
 namespace SellingNewProduct.API.Controllers;
 
@@ -14,26 +10,26 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class UsersController : ControllerBase
 {
-    private readonly IUserRepository myUserRepository;
+    private readonly IUserService myUserService;
     private readonly IValidator<CreateUserRequest> myCreateValidator;
 
-    public UsersController(IUserRepository theUserRepository, IValidator<CreateUserRequest> theCreateValidator)
+    public UsersController(IUserService theUserService, IValidator<CreateUserRequest> theCreateValidator)
     {
-        myUserRepository = theUserRepository;
+        myUserService = theUserService;
         myCreateValidator = theCreateValidator;
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<UserResponse>>> GetAll(CancellationToken theCancellationToken)
     {
-        var aUsers = await myUserRepository.GetAllAsync(theCancellationToken);
+        var aUsers = await myUserService.GetAllAsync(theCancellationToken);
         return Ok(aUsers.Select(u => u.ToResponse()).ToList());
     }
 
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<UserResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aUser = await myUserRepository.GetByIdAsync(theId, theCancellationToken);
+        var aUser = await myUserService.GetByIdAsync(theId, theCancellationToken);
         return aUser is null ? NotFound() : Ok(aUser.ToResponse());
     }
 
@@ -42,13 +38,7 @@ public sealed class UsersController : ControllerBase
     {
         await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
 
-        var aUser = DomainUser.Create(
-            theRequest.Username,
-            PasswordHasher.Hash(theRequest.Password),
-            Email.Create(theRequest.Email),
-            (UserRole)theRequest.Role);
-
-        await myUserRepository.AddAsync(aUser, theCancellationToken);
+        var aUser = await myUserService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aUser.Id }, aUser.ToResponse());
     }

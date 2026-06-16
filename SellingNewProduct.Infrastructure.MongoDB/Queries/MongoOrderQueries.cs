@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Orders;
 using SellingNewProduct.Domain.Payments;
+using SellingNewProduct.Domain.Queries;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 
 namespace SellingNewProduct.Infrastructure.MongoDB.Queries;
@@ -130,39 +130,29 @@ internal sealed class MongoOrderQueries : IOrderQueries
     }
 
     public async Task<PagedResult<OrderSummaryView>> SearchAsync(
-        Guid? theCustomerId = null,
-        Guid? theEmployeeId = null,
-        string? theCustomerName = null,
-        string? theEmployeeName = null,
-        OrderStatus? theStatus = null,
-        DateTime? theFromUtc = null,
-        DateTime? theToUtc = null,
-        int thePage = 1,
-        int thePageSize = PageRequest.DefaultPageSize,
-        string? theSortBy = null,
-        bool theSortDescending = false,
+        OrderSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aPage = new PageRequest(thePage, thePageSize);
+        var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
         // Mongo cannot JOIN, so a filter on the customer/employee NAME has to be turned
         // into a filter on their IDs first: find the matching people, then keep orders
         // whose CustomerId/EmployeeId is in that set ($in). This keeps the orders query
         // — and therefore the paging — running on the database.
-        var aCustomerIdFilter = await ResolveCustomerIdsByNameAsync(theCustomerName, theCancellationToken);
-        var aEmployeeIdFilter = await ResolveEmployeeIdsByNameAsync(theEmployeeName, theCancellationToken);
+        var aCustomerIdFilter = await ResolveCustomerIdsByNameAsync(theQuery.CustomerName, theCancellationToken);
+        var aEmployeeIdFilter = await ResolveEmployeeIdsByNameAsync(theQuery.EmployeeName, theCancellationToken);
 
         var aQuery = myMongoAppDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus);
 
-        if (theCustomerId is not null)
+        if (theQuery.CustomerId is not null)
         {
-            aQuery = aQuery.Where(o => o.CustomerId == theCustomerId);
+            aQuery = aQuery.Where(o => o.CustomerId == theQuery.CustomerId);
         }
 
-        if (theEmployeeId is not null)
+        if (theQuery.EmployeeId is not null)
         {
-            aQuery = aQuery.Where(o => o.EmployeeId == theEmployeeId);
+            aQuery = aQuery.Where(o => o.EmployeeId == theQuery.EmployeeId);
         }
 
         if (aCustomerIdFilter is not null)
@@ -175,30 +165,30 @@ internal sealed class MongoOrderQueries : IOrderQueries
             aQuery = aQuery.Where(o => aEmployeeIdFilter.Contains(o.EmployeeId));
         }
 
-        if (theStatus is not null)
+        if (theQuery.Status is not null)
         {
-            var aStatusValue = (int)theStatus.Value;
+            var aStatusValue = (int)theQuery.Status.Value;
             aQuery = aQuery.Where(o => o.OrderStatus == aStatusValue);
         }
 
-        if (theFromUtc is not null)
+        if (theQuery.FromUtc is not null)
         {
-            aQuery = aQuery.Where(o => o.OrderDate >= theFromUtc);
+            aQuery = aQuery.Where(o => o.OrderDate >= theQuery.FromUtc);
         }
 
-        if (theToUtc is not null)
+        if (theQuery.ToUtc is not null)
         {
-            aQuery = aQuery.Where(o => o.OrderDate <= theToUtc);
+            aQuery = aQuery.Where(o => o.OrderDate <= theQuery.ToUtc);
         }
 
         // Sort by the order's OWN fields on the database. Sorting by the stitched
         // customer/employee name would need every matching order loaded first (no JOIN),
         // so those fall back to the default newest-first — a concrete illustration of how
         // Mongo's lack of JOIN changes what the same contract can do efficiently.
-        aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+        aQuery = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
         {
-            "totalamount" => theSortDescending ? aQuery.OrderByDescending(o => o.TotalAmount) : aQuery.OrderBy(o => o.TotalAmount),
-            "orderdate" => theSortDescending ? aQuery.OrderByDescending(o => o.OrderDate) : aQuery.OrderBy(o => o.OrderDate),
+            "totalamount" => theQuery.SortDescending ? aQuery.OrderByDescending(o => o.TotalAmount) : aQuery.OrderBy(o => o.TotalAmount),
+            "orderdate" => theQuery.SortDescending ? aQuery.OrderByDescending(o => o.OrderDate) : aQuery.OrderBy(o => o.OrderDate),
             _ => aQuery.OrderByDescending(o => o.OrderDate)
         };
 
@@ -236,6 +226,26 @@ internal sealed class MongoOrderQueries : IOrderQueries
             .ToList();
 
         return new PagedResult<OrderSummaryView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
+    }
+
+    public async Task<IReadOnlyList<OrderStatusCountView>> GetStatusBreakdownAsync(CancellationToken theCancellationToken = default)
+    {
+        // Mongo cannot GROUP BY across the query here, so load the live orders and group
+        // them in memory — the same status breakdown as the SQL version.
+        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+            .Where(o => o.Status != DeletedStatus)
+            .ToListAsync(theCancellationToken);
+
+        var aByStatus = aOrders
+            .GroupBy(o => o.OrderStatus)
+            .ToDictionary(g => g.Key, g => (Count: g.Count(), Total: g.Sum(o => o.TotalAmount)));
+
+        return Enum.GetValues<OrderStatus>()
+            .OrderBy(s => (int)s)
+            .Select(s => aByStatus.TryGetValue((int)s, out var aRow)
+                ? new OrderStatusCountView(s.ToString(), aRow.Count, aRow.Total)
+                : new OrderStatusCountView(s.ToString(), 0, 0m))
+            .ToList();
     }
 
     /// <summary>

@@ -1,12 +1,9 @@
-namespace SellingNewProduct.Application.ReadModels;
+namespace SellingNewProduct.Domain.ReadModels;
 
 /// <summary>
 /// Flat read-model for ONE enriched order: includes customer name, selling
 /// employee name and the amount already paid. This is NOT a domain aggregate —
-/// it exists only for display (read side). That is why it lives in the
-/// Application layer, not in Domain (Domain holds business rules only) and not
-/// in API (Infrastructure must see this type to return it, but Infra does not
-/// reference API).
+/// it exists only for display (read side).
 /// </summary>
 public sealed record OrderDetailView(
     Guid OrderId,
@@ -65,3 +62,13 @@ public sealed record OrderSummaryView(
     DateTime OrderDate,
     decimal TotalAmount,
     string Currency);
+
+/// <summary>
+/// How many orders sit in a given status, and the total amount they represent.
+/// A GROUP BY OrderStatus over the Orders table — a dashboard tile (e.g. "3 Draft,
+/// 12 Confirmed, 5 Shipped, 1 Cancelled").
+/// </summary>
+public sealed record OrderStatusCountView(
+    string OrderStatus,
+    int Count,
+    decimal TotalAmount);

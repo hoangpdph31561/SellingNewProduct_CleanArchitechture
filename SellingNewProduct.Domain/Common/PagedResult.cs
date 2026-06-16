@@ -1,4 +1,4 @@
-namespace SellingNewProduct.Application.Common;
+namespace SellingNewProduct.Domain.Common;
 
 /// <summary>
 /// One page of a larger result set, plus the metadata a UI needs to render paging

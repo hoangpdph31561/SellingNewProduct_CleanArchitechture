@@ -2,12 +2,10 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
-using SellingNewProduct.Domain.Orders;
-using SellingNewProduct.Domain.Repositories;
-using SellingNewProduct.Domain.ValueObjects;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 
 namespace SellingNewProduct.API.Controllers;
 
@@ -15,27 +13,18 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class OrdersController : ControllerBase
 {
-    private readonly IOrderRepository myOrderRepository;
-    private readonly ICustomerRepository myCustomerRepository;
-    private readonly IEmployeeRepository myEmployeeRepository;
-    private readonly IProductRepository myProductRepository;
+    private readonly IOrderService myOrderService;
     private readonly IOrderQueries myOrderQueries;
     private readonly IValidator<CreateOrderRequest> myCreateValidator;
     private readonly IValidator<AddOrderDetailRequest> myAddDetailValidator;
 
     public OrdersController(
-        IOrderRepository theOrderRepository,
-        ICustomerRepository theCustomerRepository,
-        IEmployeeRepository theEmployeeRepository,
-        IProductRepository theProductRepository,
+        IOrderService theOrderService,
         IOrderQueries theOrderQueries,
         IValidator<CreateOrderRequest> theCreateValidator,
         IValidator<AddOrderDetailRequest> theAddDetailValidator)
     {
-        myOrderRepository = theOrderRepository;
-        myCustomerRepository = theCustomerRepository;
-        myEmployeeRepository = theEmployeeRepository;
-        myProductRepository = theProductRepository;
+        myOrderService = theOrderService;
         myOrderQueries = theOrderQueries;
         myCreateValidator = theCreateValidator;
         myAddDetailValidator = theAddDetailValidator;
@@ -44,7 +33,7 @@ public sealed class OrdersController : ControllerBase
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<OrderResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
+        var aOrder = await myOrderService.GetByIdAsync(theId, theCancellationToken);
         return aOrder is null ? NotFound() : Ok(aOrder.ToResponse());
     }
 
@@ -69,22 +58,21 @@ public sealed class OrdersController : ControllerBase
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<PagedResult<OrderSummaryView>>> Search(
-        [FromQuery] Guid? theCustomerId,
-        [FromQuery] Guid? theEmployeeId,
-        [FromQuery] string? theCustomerName,
-        [FromQuery] string? theEmployeeName,
-        [FromQuery] OrderStatus? theStatus,
-        [FromQuery] DateTime? theFromUtc,
-        [FromQuery] DateTime? theToUtc,
-        [FromQuery] int thePage = 1,
-        [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
-        [FromQuery] string? theSortBy = null,
-        [FromQuery] bool theSortDescending = false,
+        [FromQuery] OrderSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myOrderQueries.SearchAsync(
-            theCustomerId, theEmployeeId, theCustomerName, theEmployeeName, theStatus,
-            theFromUtc, theToUtc, thePage, thePageSize, theSortBy, theSortDescending, theCancellationToken);
+        var aResult = await myOrderQueries.SearchAsync(theQuery, theCancellationToken);
+        return Ok(aResult);
+    }
+
+    /// <summary>
+    /// How many orders sit in each status and the total amount they represent — a
+    /// dashboard breakdown (GROUP BY status). <c>GET /api/orders/status-breakdown</c>
+    /// </summary>
+    [HttpGet("status-breakdown")]
+    public async Task<ActionResult<IReadOnlyList<OrderStatusCountView>>> StatusBreakdown(CancellationToken theCancellationToken)
+    {
+        var aResult = await myOrderQueries.GetStatusBreakdownAsync(theCancellationToken);
         return Ok(aResult);
     }
 
@@ -93,27 +81,7 @@ public sealed class OrdersController : ControllerBase
     {
         await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
 
-        var aCustomer = await myCustomerRepository.GetByIdAsync(theRequest.CustomerId, theCancellationToken);
-        if (aCustomer is null)
-        {
-            return NotFound($"Customer '{theRequest.CustomerId}' not found.");
-        }
-
-        var aEmployee = await myEmployeeRepository.GetByIdAsync(theRequest.EmployeeId, theCancellationToken);
-        if (aEmployee is null)
-        {
-            return NotFound($"Employee '{theRequest.EmployeeId}' not found.");
-        }
-
-        var aShippingAddress = Address.Create(
-            theRequest.ShippingAddress.Street,
-            theRequest.ShippingAddress.Ward,
-            theRequest.ShippingAddress.District,
-            theRequest.ShippingAddress.City,
-            theRequest.ShippingAddress.Country);
-
-        var aOrder = Order.Create(theRequest.CustomerId, theRequest.EmployeeId, aShippingAddress);
-        await myOrderRepository.AddAsync(aOrder, theCancellationToken);
+        var aOrder = await myOrderService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aOrder.Id }, aOrder.ToResponse());
     }
@@ -123,66 +91,28 @@ public sealed class OrdersController : ControllerBase
     {
         await myAddDetailValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
 
-        var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
-        if (aOrder is null)
-        {
-            return NotFound($"Order '{theId}' not found.");
-        }
-
-        var aProduct = await myProductRepository.GetByIdAsync(theRequest.ProductId, theCancellationToken);
-        if (aProduct is null)
-        {
-            return NotFound($"Product '{theRequest.ProductId}' not found.");
-        }
-
-        aOrder.AddDetail(aProduct, theRequest.Quantity);
-        await myOrderRepository.UpdateAsync(aOrder, theCancellationToken);
-
+        var aOrder = await myOrderService.AddDetailAsync(theId, theRequest.ProductId, theRequest.Quantity, theCancellationToken);
         return Ok(aOrder.ToResponse());
     }
 
     [HttpPost("{theId:guid}/confirm")]
     public async Task<ActionResult<OrderResponse>> Confirm(Guid theId, CancellationToken theCancellationToken)
     {
-        var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
-        if (aOrder is null)
-        {
-            return NotFound();
-        }
-
-        aOrder.Confirm();
-        await myOrderRepository.UpdateAsync(aOrder, theCancellationToken);
-
+        var aOrder = await myOrderService.ConfirmAsync(theId, theCancellationToken);
         return Ok(aOrder.ToResponse());
     }
 
     [HttpPost("{theId:guid}/ship")]
     public async Task<ActionResult<OrderResponse>> Ship(Guid theId, CancellationToken theCancellationToken)
     {
-        var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
-        if (aOrder is null)
-        {
-            return NotFound();
-        }
-
-        aOrder.MarkShipped();
-        await myOrderRepository.UpdateAsync(aOrder, theCancellationToken);
-
+        var aOrder = await myOrderService.ShipAsync(theId, theCancellationToken);
         return Ok(aOrder.ToResponse());
     }
 
     [HttpPost("{theId:guid}/cancel")]
     public async Task<ActionResult<OrderResponse>> Cancel(Guid theId, CancellationToken theCancellationToken)
     {
-        var aOrder = await myOrderRepository.GetByIdAsync(theId, theCancellationToken);
-        if (aOrder is null)
-        {
-            return NotFound();
-        }
-
-        aOrder.Cancel();
-        await myOrderRepository.UpdateAsync(aOrder, theCancellationToken);
-
+        var aOrder = await myOrderService.CancelAsync(theId, theCancellationToken);
         return Ok(aOrder.ToResponse());
     }
 }

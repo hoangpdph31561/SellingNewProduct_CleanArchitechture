@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using SellingNewProduct.Application.Queries;
+using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 using SellingNewProduct.Infrastructure.SqlServer.Queries;
@@ -34,6 +34,10 @@ public static class DependencyInjection
         theServices.AddScoped<IProductQueries, SqlServerProductQueries>();
         theServices.AddScoped<IOrderQueries, SqlServerOrderQueries>();
         theServices.AddScoped<IReportQueries, SqlServerReportQueries>();
+        theServices.AddScoped<ICustomerQueries, SqlServerCustomerQueries>();
+        theServices.AddScoped<IEmployeeQueries, SqlServerEmployeeQueries>();
+        theServices.AddScoped<ICategoryQueries, SqlServerCategoryQueries>();
+        theServices.AddScoped<IPaymentQueries, SqlServerPaymentQueries>();
 
         return theServices;
     }

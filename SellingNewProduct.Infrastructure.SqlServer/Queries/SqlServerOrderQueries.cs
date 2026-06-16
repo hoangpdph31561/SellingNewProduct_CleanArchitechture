@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
+using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Orders;
 using SellingNewProduct.Domain.Payments;
+using SellingNewProduct.Domain.Queries;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 
 namespace SellingNewProduct.Infrastructure.SqlServer.Queries;
@@ -136,20 +137,10 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
     }
 
     public async Task<PagedResult<OrderSummaryView>> SearchAsync(
-        Guid? theCustomerId = null,
-        Guid? theEmployeeId = null,
-        string? theCustomerName = null,
-        string? theEmployeeName = null,
-        OrderStatus? theStatus = null,
-        DateTime? theFromUtc = null,
-        DateTime? theToUtc = null,
-        int thePage = 1,
-        int thePageSize = PageRequest.DefaultPageSize,
-        string? theSortBy = null,
-        bool theSortDescending = false,
+        OrderSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aPage = new PageRequest(thePage, thePageSize);
+        var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
         // Start from a JOIN over three tables, then append filters when a parameter has a value.
         var aQuery =
@@ -158,54 +149,54 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
             join e in myAppDbContext.Employees on o.EmployeeId equals e.Id
             select new { o, CustomerName = c.FullName, EmployeeName = e.FullName };
 
-        if (theCustomerId is not null)
+        if (theQuery.CustomerId is not null)
         {
-            aQuery = aQuery.Where(x => x.o.CustomerId == theCustomerId);
+            aQuery = aQuery.Where(x => x.o.CustomerId == theQuery.CustomerId);
         }
 
-        if (theEmployeeId is not null)
+        if (theQuery.EmployeeId is not null)
         {
-            aQuery = aQuery.Where(x => x.o.EmployeeId == theEmployeeId);
+            aQuery = aQuery.Where(x => x.o.EmployeeId == theQuery.EmployeeId);
         }
 
         // Name filters: because we already JOINed Customers/Employees, the names are in
         // the query — SQL turns these into a LIKE that runs on the database.
-        if (!string.IsNullOrWhiteSpace(theCustomerName))
+        if (!string.IsNullOrWhiteSpace(theQuery.CustomerName))
         {
-            var aCustomerName = theCustomerName.Trim();
+            var aCustomerName = theQuery.CustomerName.Trim();
             aQuery = aQuery.Where(x => x.CustomerName.Contains(aCustomerName));
         }
 
-        if (!string.IsNullOrWhiteSpace(theEmployeeName))
+        if (!string.IsNullOrWhiteSpace(theQuery.EmployeeName))
         {
-            var aEmployeeName = theEmployeeName.Trim();
+            var aEmployeeName = theQuery.EmployeeName.Trim();
             aQuery = aQuery.Where(x => x.EmployeeName.Contains(aEmployeeName));
         }
 
-        if (theStatus is not null)
+        if (theQuery.Status is not null)
         {
-            var aStatusValue = (int)theStatus.Value;
+            var aStatusValue = (int)theQuery.Status.Value;
             aQuery = aQuery.Where(x => x.o.OrderStatus == aStatusValue);
         }
 
-        if (theFromUtc is not null)
+        if (theQuery.FromUtc is not null)
         {
-            aQuery = aQuery.Where(x => x.o.OrderDate >= theFromUtc);
+            aQuery = aQuery.Where(x => x.o.OrderDate >= theQuery.FromUtc);
         }
 
-        if (theToUtc is not null)
+        if (theQuery.ToUtc is not null)
         {
-            aQuery = aQuery.Where(x => x.o.OrderDate <= theToUtc);
+            aQuery = aQuery.Where(x => x.o.OrderDate <= theQuery.ToUtc);
         }
 
         // ORDER BY by a whitelisted column. Default = newest first (OrderDate desc), which
         // is the natural order for an order list.
-        aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+        aQuery = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
         {
-            "totalamount" => theSortDescending ? aQuery.OrderByDescending(x => x.o.TotalAmount) : aQuery.OrderBy(x => x.o.TotalAmount),
-            "customername" => theSortDescending ? aQuery.OrderByDescending(x => x.CustomerName) : aQuery.OrderBy(x => x.CustomerName),
-            "employeename" => theSortDescending ? aQuery.OrderByDescending(x => x.EmployeeName) : aQuery.OrderBy(x => x.EmployeeName),
-            "orderdate" => theSortDescending ? aQuery.OrderByDescending(x => x.o.OrderDate) : aQuery.OrderBy(x => x.o.OrderDate),
+            "totalamount" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.o.TotalAmount) : aQuery.OrderBy(x => x.o.TotalAmount),
+            "customername" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.CustomerName) : aQuery.OrderBy(x => x.CustomerName),
+            "employeename" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.EmployeeName) : aQuery.OrderBy(x => x.EmployeeName),
+            "orderdate" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.o.OrderDate) : aQuery.OrderBy(x => x.o.OrderDate),
             _ => aQuery.OrderByDescending(x => x.o.OrderDate)
         };
 
@@ -240,5 +231,24 @@ internal sealed class SqlServerOrderQueries : IOrderQueries
             .ToList();
 
         return new PagedResult<OrderSummaryView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
+    }
+
+    public async Task<IReadOnlyList<OrderStatusCountView>> GetStatusBreakdownAsync(CancellationToken theCancellationToken = default)
+    {
+        // GROUP BY OrderStatus on the database — count and total amount per status.
+        var aRows = await myAppDbContext.Orders.AsNoTracking()
+            .GroupBy(o => o.OrderStatus)
+            .Select(g => new { Status = g.Key, Count = g.Count(), Total = g.Sum(o => o.TotalAmount) })
+            .ToListAsync(theCancellationToken);
+
+        var aByStatus = aRows.ToDictionary(r => r.Status);
+
+        // Return every status, including those with no orders (count 0), ordered by value.
+        return Enum.GetValues<OrderStatus>()
+            .OrderBy(s => (int)s)
+            .Select(s => aByStatus.TryGetValue((int)s, out var aRow)
+                ? new OrderStatusCountView(s.ToString(), aRow.Count, aRow.Total)
+                : new OrderStatusCountView(s.ToString(), 0, 0m))
+            .ToList();
     }
 }

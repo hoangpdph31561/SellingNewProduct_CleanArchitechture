@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Infrastructure.MongoDB.Models;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 
@@ -29,54 +29,72 @@ internal sealed class MongoProductQueries : IProductQueries
         myMongoAppDbContext = theMongoAppDbContext;
     }
 
+    public async Task<ProductSummaryView?> GetByIdAsync(Guid theProductId, CancellationToken theCancellationToken = default)
+    {
+        var aProduct = await myMongoAppDbContext.Products.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == theProductId && p.Status != DeletedStatus, theCancellationToken);
+
+        if (aProduct is null)
+        {
+            return null;
+        }
+
+        // No JOIN — look up the category name by id (the stitch).
+        var aCategory = await myMongoAppDbContext.Categories.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == aProduct.CategoryId, theCancellationToken);
+
+        return new ProductSummaryView(
+            aProduct.Id,
+            aProduct.Name,
+            aProduct.Sku,
+            aProduct.Color,
+            aProduct.Size,
+            aProduct.PriceAmount,
+            aProduct.PriceCurrency,
+            aProduct.StockQuantity,
+            aProduct.CategoryId,
+            aCategory?.Name ?? "(unknown)",
+            ((EntityStatus)aProduct.Status).ToString());
+    }
+
     public async Task<PagedResult<ProductSummaryView>> SearchAsync(
-        string? theName = null,
-        Guid? theCategoryId = null,
-        decimal? thePriceFrom = null,
-        decimal? thePriceTo = null,
-        int? theMinStock = null,
-        int? theMaxStock = null,
-        EntityStatus? theStatus = null,
-        int thePage = 1,
-        int thePageSize = PageRequest.DefaultPageSize,
-        string? theSortBy = null,
-        bool theSortDescending = false,
+        ProductSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aPage = new PageRequest(thePage, thePageSize);
+        var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
         // Push the field comparisons to the database to shrink the candidate set.
         var aQuery = myMongoAppDbContext.Products.AsNoTracking()
             .Where(p => p.Status != DeletedStatus);
 
-        if (theCategoryId is not null)
+        if (theQuery.CategoryId is not null)
         {
-            aQuery = aQuery.Where(p => p.CategoryId == theCategoryId);
+            aQuery = aQuery.Where(p => p.CategoryId == theQuery.CategoryId);
         }
 
-        if (thePriceFrom is not null)
+        if (theQuery.PriceFrom is not null)
         {
-            aQuery = aQuery.Where(p => p.PriceAmount >= thePriceFrom);
+            aQuery = aQuery.Where(p => p.PriceAmount >= theQuery.PriceFrom);
         }
 
-        if (thePriceTo is not null)
+        if (theQuery.PriceTo is not null)
         {
-            aQuery = aQuery.Where(p => p.PriceAmount <= thePriceTo);
+            aQuery = aQuery.Where(p => p.PriceAmount <= theQuery.PriceTo);
         }
 
-        if (theMinStock is not null)
+        if (theQuery.MinStock is not null)
         {
-            aQuery = aQuery.Where(p => p.StockQuantity >= theMinStock);
+            aQuery = aQuery.Where(p => p.StockQuantity >= theQuery.MinStock);
         }
 
-        if (theMaxStock is not null)
+        if (theQuery.MaxStock is not null)
         {
-            aQuery = aQuery.Where(p => p.StockQuantity <= theMaxStock);
+            aQuery = aQuery.Where(p => p.StockQuantity <= theQuery.MaxStock);
         }
 
-        if (theStatus is not null)
+        if (theQuery.Status is not null)
         {
-            var aStatusValue = (int)theStatus.Value;
+            var aStatusValue = (int)theQuery.Status.Value;
             aQuery = aQuery.Where(p => p.Status == aStatusValue);
         }
 
@@ -85,17 +103,17 @@ internal sealed class MongoProductQueries : IProductQueries
         // Name "contains" + sorting in memory (Mongo has no JOIN/limited text translation).
         IEnumerable<ProductDocument> aFiltered = aCandidates;
 
-        if (!string.IsNullOrWhiteSpace(theName))
+        if (!string.IsNullOrWhiteSpace(theQuery.Name))
         {
-            var aName = theName.Trim();
+            var aName = theQuery.Name.Trim();
             aFiltered = aFiltered.Where(p => p.Name.Contains(aName, StringComparison.OrdinalIgnoreCase));
         }
 
-        aFiltered = (theSortBy?.Trim().ToLowerInvariant()) switch
+        aFiltered = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
         {
-            "price" => theSortDescending ? aFiltered.OrderByDescending(p => p.PriceAmount) : aFiltered.OrderBy(p => p.PriceAmount),
-            "stock" => theSortDescending ? aFiltered.OrderByDescending(p => p.StockQuantity) : aFiltered.OrderBy(p => p.StockQuantity),
-            _ => theSortDescending ? aFiltered.OrderByDescending(p => p.Name) : aFiltered.OrderBy(p => p.Name)
+            "price" => theQuery.SortDescending ? aFiltered.OrderByDescending(p => p.PriceAmount) : aFiltered.OrderBy(p => p.PriceAmount),
+            "stock" => theQuery.SortDescending ? aFiltered.OrderByDescending(p => p.StockQuantity) : aFiltered.OrderBy(p => p.StockQuantity),
+            _ => theQuery.SortDescending ? aFiltered.OrderByDescending(p => p.Name) : aFiltered.OrderBy(p => p.Name)
         };
 
         var aMatched = aFiltered.ToList();

@@ -11,43 +11,39 @@ Domain có thể chạy trên **SQL Server** hoặc **MongoDB** mà không sửa
 ## 1. Cấu trúc giải pháp
 
 ```
-SellingNewProduct.sln
-├── SellingNewProduct.Domain                    # Tầng trong cùng — business thuần, KHÔNG ref ai
-├── SellingNewProduct.Application               # Read side: read-model + query interface → ref Domain
-├── SellingNewProduct.Infrastructure.SqlServer  # EF Core + SQL Server   → ref Domain + Application
-├── SellingNewProduct.Infrastructure.MongoDB    # EF Core + MongoDB       → ref Domain + Application
-└── SellingNewProduct.API                        # Controller, DTO, Validation → ref Domain + Application + Infra
+SellingNewProduct.sln  (3 tầng)
+├── SellingNewProduct.Domain                    # Tầng trong cùng — business + Domain Service + read side, KHÔNG ref ai*
+├── SellingNewProduct.Infrastructure.SqlServer  # EF Core + SQL Server   → ref Domain
+├── SellingNewProduct.Infrastructure.MongoDB    # EF Core + MongoDB       → ref Domain
+└── SellingNewProduct.API                        # Controller, DTO, Validation → ref Domain + 2 Infra
 ```
+<sub>* Domain chỉ ref `Microsoft.Extensions.DependencyInjection.Abstractions` (contract DI thuần để có `AddDomainServices`).</sub>
 
 Quy tắc phụ thuộc (Dependency Rule — mũi tên luôn hướng vào trong):
 
 ```
-API ─────► Infrastructure.* ─────► Application ─────► Domain
- │              │                                       ▲
- └──────────────┴────────────────────────────────────── ┘   (API/Infra biết Domain & Application)
+API ─────► Infrastructure.* ─────► Domain
+ │                                   ▲
+ └───────────────────────────────────┘   (API cũng ref thẳng Domain)
 ```
 
-- **Domain** không reference bất kỳ project nào, không reference EF Core, không biết SQL/Mongo.
-- **Application** chứa **read side** (CQRS-lite): read-model phẳng + interface truy vấn (`IOrderQueries`,
-  `IProductQueries`, `IReportQueries`) để JOIN/báo cáo nhiều bảng, kèm `PagedResult<T>`/`PageRequest`
-  cho phân trang. Chỉ ref Domain.
-- **Infrastructure** triển khai (implement) interface repository của Domain **và** query của Application
-  (SQL bằng JOIN thật; Mongo ghép trong bộ nhớ).
-- **API** là *composition root*: chọn đăng ký Infra nào (SqlServer hay Mongo) lúc khởi động.
+- **Domain** không reference project nào, không EF Core, không biết SQL/Mongo. Chứa: entity/aggregate,
+  **Domain Service** (`I*Service` — write side, API gọi cái này), **interface repository**, và **read side**
+  (`I*Queries` + read-model `*View` + `PagedResult<T>`).
+- **Infrastructure** triển khai interface repository **và** query của Domain (SQL bằng JOIN thật; Mongo ghép trong bộ nhớ).
+- **API** là *composition root*: validate format request, gọi Domain Service / query, chọn đăng ký Infra nào lúc khởi động.
 
-> 💡 **Vì sao read-model không nằm ở Domain hay API?** Nó không phải business rule (nên không vào Domain),
-> nhưng Infrastructure phải *nhìn thấy* kiểu trả về để implement query — mà Infra không ref API. Tầng
-> **Application** là nơi cả Infra lẫn API đều thấy được. Xem [docs/code/05-Application.md](docs/code/05-Application.md).
+> 💡 **Chỉ 3 tầng.** Tầng Application cũ (read side) đã gộp vào Domain. Đánh đổi: Domain "rộng" hơn (ôm
+> read-model) nhưng kiến trúc đơn giản, đúng mô hình API → Domain ← Infrastructure. Xem [docs/code/05-Application.md](docs/code/05-Application.md).
 
 ## 2. Trách nhiệm từng tầng
 
 | Tầng | Chứa gì | Không được chứa |
 |------|---------|-----------------|
-| **Domain** | Entity nghiệp vụ (Order, Customer, Product), Value Object (Money, Email, Address), Aggregate Root, Domain Event, business rule, **interface repository** | EF Core, attribute DB, DTO, JSON |
-| **Application** | **Read-model** phẳng (`OrderDetailView`, `ProductSummaryView`, `BestSellingProductView`…), **interface query** (`IOrderQueries`, `IProductQueries`, `IReportQueries`), **phân trang** (`PagedResult<T>`, `PageRequest`) cho việc đọc/tìm kiếm/báo cáo nhiều bảng | Business rule, EF Core, truy cập DB |
-| **Infrastructure.SqlServer** | `DbContext`, persistence model riêng (`*Record`), `IEntityTypeConfiguration`, Repository impl, Mapper Domain↔Record | Logic nghiệp vụ |
-| **Infrastructure.MongoDB** | `DbContext` (provider Mongo), persistence model riêng (`*Document`), Repository impl, Mapper Domain↔Document | Logic nghiệp vụ |
-| **API** | Controller, Request/Response DTO, Validation (FluentValidation), DI/config, mapping DTO↔Domain | Truy cập DB trực tiếp |
+| **Domain** | Entity nghiệp vụ, Value Object, Aggregate Root, Domain Event, business rule, **interface repository**, **Domain Service** (`I*Service`), **read side** (`I*Queries` + read-model `*View` + `PagedResult<T>`) | EF Core, attribute DB, DTO, JSON |
+| **Infrastructure.SqlServer** | `DbContext`, persistence model riêng (`*Record`), `IEntityTypeConfiguration`, Repository impl, Query impl (JOIN), Mapper Domain↔Record | Logic nghiệp vụ |
+| **Infrastructure.MongoDB** | `DbContext` (provider Mongo), persistence model riêng (`*Document`), Repository impl, Query impl (stitch), Mapper Domain↔Document | Logic nghiệp vụ |
+| **API** | Controller (gọi Domain Service/query), Request/Response DTO, Validation (FluentValidation), `IPasswordHasher` impl, DI/config, mapping DTO↔Domain | Truy cập DB trực tiếp, business rule |
 
 ## 3. Yêu cầu môi trường
 

@@ -2,11 +2,10 @@ using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
-using SellingNewProduct.Domain.Customers;
-using SellingNewProduct.Domain.Repositories;
-using SellingNewProduct.Domain.ValueObjects;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 
 namespace SellingNewProduct.API.Controllers;
 
@@ -14,34 +13,65 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class CustomersController : ControllerBase
 {
-    private readonly ICustomerRepository myCustomerRepository;
+    private readonly ICustomerService myCustomerService;
     private readonly IOrderQueries myOrderQueries;
+    private readonly ICustomerQueries myCustomerQueries;
     private readonly IValidator<CreateCustomerRequest> myCreateValidator;
     private readonly IValidator<DeleteCustomerRequest> myDeleteValidator;
 
     public CustomersController(
-        ICustomerRepository theCustomerRepository,
+        ICustomerService theCustomerService,
         IOrderQueries theOrderQueries,
+        ICustomerQueries theCustomerQueries,
         IValidator<CreateCustomerRequest> theCreateValidator,
         IValidator<DeleteCustomerRequest> theDeleteValidator)
     {
-        myCustomerRepository = theCustomerRepository;
+        myCustomerService = theCustomerService;
         myOrderQueries = theOrderQueries;
+        myCustomerQueries = theCustomerQueries;
         myCreateValidator = theCreateValidator;
         myDeleteValidator = theDeleteValidator;
+    }
+
+    /// <summary>
+    /// Search/filter customers (read side). Every filter is optional: a "contains" on name,
+    /// email, phone or city, plus status; sort by name/email/city.
+    /// Example: <c>GET /api/customers/search?theCity=Ha&amp;theSortBy=name&amp;thePage=1&amp;thePageSize=20</c>
+    /// </summary>
+    [HttpGet("search")]
+    public async Task<ActionResult<PagedResult<CustomerSummaryView>>> Search(
+        [FromQuery] CustomerSearchQuery theQuery,
+        CancellationToken theCancellationToken = default)
+    {
+        var aResult = await myCustomerQueries.SearchAsync(theQuery, theCancellationToken);
+        return Ok(aResult);
+    }
+
+    /// <summary>
+    /// Customers ranked by total amount spent (real sales), paginated. Page 1 is the "top N".
+    /// <c>GET /api/customers/top?thePage=1&amp;thePageSize=10</c>
+    /// </summary>
+    [HttpGet("top")]
+    public async Task<ActionResult<PagedResult<TopCustomerView>>> Top(
+        [FromQuery] int thePage = 1,
+        [FromQuery] int thePageSize = 10,
+        CancellationToken theCancellationToken = default)
+    {
+        var aResult = await myCustomerQueries.GetTopCustomersAsync(thePage, thePageSize, theCancellationToken);
+        return Ok(aResult);
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<CustomerResponse>>> GetAll(CancellationToken theCancellationToken)
     {
-        var aCustomers = await myCustomerRepository.GetAllAsync(theCancellationToken);
+        var aCustomers = await myCustomerService.GetAllAsync(theCancellationToken);
         return Ok(aCustomers.Select(c => c.ToResponse()).ToList());
     }
 
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<CustomerResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aCustomer = await myCustomerRepository.GetByIdAsync(theId, theCancellationToken);
+        var aCustomer = await myCustomerService.GetByIdAsync(theId, theCancellationToken);
         return aCustomer is null ? NotFound() : Ok(aCustomer.ToResponse());
     }
 
@@ -61,21 +91,7 @@ public sealed class CustomersController : ControllerBase
     {
         await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
 
-        var aAddress = Address.Create(
-            theRequest.Address.Street,
-            theRequest.Address.Ward,
-            theRequest.Address.District,
-            theRequest.Address.City,
-            theRequest.Address.Country);
-
-        var aCustomer = Customer.Create(
-            theRequest.FullName,
-            Email.Create(theRequest.Email),
-            theRequest.PhoneNumber,
-            aAddress,
-            theRequest.UserId);
-
-        await myCustomerRepository.AddAsync(aCustomer, theCancellationToken);
+        var aCustomer = await myCustomerService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aCustomer.Id }, aCustomer.ToResponse());
     }
@@ -84,7 +100,7 @@ public sealed class CustomersController : ControllerBase
     public async Task<ActionResult> Delete(DeleteCustomerRequest theRequest, CancellationToken theCancellationToken)
     {
         await myDeleteValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-        await myCustomerRepository.DeleteAsync(theRequest.Id, theCancellationToken);
+        await myCustomerService.DeleteAsync(theRequest.Id, theCancellationToken);
         return NoContent();
     }
 }

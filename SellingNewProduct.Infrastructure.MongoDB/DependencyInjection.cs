@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using SellingNewProduct.Application.Queries;
+using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 using SellingNewProduct.Infrastructure.MongoDB.Queries;
@@ -36,6 +36,10 @@ public static class DependencyInjection
         theServices.AddScoped<IProductQueries, MongoProductQueries>();
         theServices.AddScoped<IOrderQueries, MongoOrderQueries>();
         theServices.AddScoped<IReportQueries, MongoReportQueries>();
+        theServices.AddScoped<ICustomerQueries, MongoCustomerQueries>();
+        theServices.AddScoped<IEmployeeQueries, MongoEmployeeQueries>();
+        theServices.AddScoped<ICategoryQueries, MongoCategoryQueries>();
+        theServices.AddScoped<IPaymentQueries, MongoPaymentQueries>();
 
         return theServices;
     }

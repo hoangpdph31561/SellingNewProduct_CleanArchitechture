@@ -22,6 +22,16 @@ Exception **riêng** của domain, ném khi vi phạm quy tắc nghiệp vụ (v
 💡 Không dùng `Exception` trơn hay `ArgumentException` cho lỗi nghiệp vụ — tách loại lỗi giúp
 xử lý đúng ở tầng ngoài.
 
+### `NotFoundException.cs`
+Exception riêng cho trường hợp **entity liên quan không tồn tại** (vd tạo Product với `CategoryId` sai,
+thanh toán cho Order không có). Domain Service ném loại này; API map sang **404** (khác `DomainException`
+→ 400). `sealed`, chỉ mang message.
+
+### `PagedResult.cs` — `PagedResult<T>` + `PageRequest`
+Thuộc read side nhưng đặt ở Common: `PagedResult<T>` = 1 trang dữ liệu + `TotalCount`/`TotalPages`/
+`HasNext`/`HasPrevious`; `PageRequest` kẹp `page`/`pageSize` về khoảng an toàn ở MỘT chỗ. Xem
+[06-Pagination-Search.md](06-Pagination-Search.md).
+
 ### `IDomainEvent.cs`
 Interface "đánh dấu" (marker) cho **sự kiện nghiệp vụ đã xảy ra**.
 - Chỉ có `DateTime OccurredOnUtc { get; }`.
@@ -187,12 +197,46 @@ Enum size áo quần: `S, M, L, XL, XXL`.
 Infrastructure**. Domain nói "tôi cần lưu/đọc Order" mà không biết lưu vào SQL hay Mongo.
 
 Mẫu chung mỗi interface: `GetByIdAsync`, `GetAllAsync` (hoặc query riêng), `AddAsync`, `UpdateAsync`.
-Không có `DeleteAsync` cứng — xóa là `entity.Delete()` (mềm) rồi `UpdateAsync`.
 
-Một vài method truy vấn đặc thù (vì **chưa làm CQRS**, query để luôn trong repository):
+Một vài method truy vấn/nghiệp vụ đặc thù:
+- `ICategoryRepository.ExistsByNameAsync` — phục vụ rule "tên category không trùng" (Domain Service gọi).
 - `IUserRepository.GetByUsernameAsync` — tìm theo username (đăng nhập).
 - `IProductRepository.GetByCategoryAsync` — sản phẩm theo danh mục.
 - `IOrderRepository.GetByCustomerAsync`, `GetByDateRangeAsync` — phục vụ tra cứu/báo cáo đơn giản.
 - `IPaymentRepository.GetByOrderAsync` — thanh toán của một đơn.
+- `ICustomerRepository.DeleteAsync` — xóa mềm khách theo Id.
 
 > Tham số đều có `CancellationToken theCancellationToken = default` để hủy tác vụ async khi cần.
+
+---
+
+## E. Domain Service (`Domain/Abstractions` + `Domain/Services`)
+
+💡 **Logic ghi sống ở đây, không ở controller.** Những gì cần phối hợp aggregate + repository (đặc biệt
+các kiểm tra phải truy vấn DB) đặt trong Domain Service. Controller chỉ gọi service.
+
+📁 **Tổ chức theo loại** (không nhét vào folder aggregate): interface ở `Domain/Abstractions/`
+(I*Service + I*Queries + IPasswordHasher), implementation ở `Domain/Services/`. Folder theo aggregate
+(`Categories/`, `Orders/`…) giờ chỉ chứa entity/enum/event.
+
+- Mỗi module một cặp: `ICategoryService` (public, `Abstractions/` — API thấy) + `CategoryService` (`internal sealed`, `Services/` — chứa logic).
+- Ví dụ `CategoryService.CreateAsync`: tạo qua `Category.Create` (validate + trim), gọi `ExistsByNameAsync`
+  để chặn trùng tên (ném `DomainException`), rồi `AddAsync`. Trả `Category` cho API.
+- `ProductService`/`OrderService`/`PaymentService`/`EmployeeService`: kiểm entity liên quan tồn tại,
+  ném `NotFoundException` nếu thiếu → API trả 404.
+- `UserService`: băm mật khẩu qua **`IPasswordHasher`** (interface khai báo ở `Domain/Users`, API implement)
+  rồi `User.Create`. 💡 Domain định nghĩa hợp đồng, tầng ngoài cắm cách làm vào — vẫn đúng chiều phụ thuộc.
+- Đăng ký: `Domain/DependencyInjection.cs` → `AddDomainServices()`; `Program.cs` gọi nó. Nhờ vậy `*Service`
+  để `internal` mà API vẫn dùng được qua interface.
+
+> Domain ref `Microsoft.Extensions.DependencyInjection.Abstractions` chỉ để có `IServiceCollection` cho
+> `AddDomainServices()` — đây là contract DI thuần, không phải hạ tầng, nên Domain vẫn "sạch".
+
+---
+
+## F. Read side trong Domain (`Domain/Abstractions`, `Domain/ReadModels`)
+
+Vì dự án chỉ còn **3 tầng** (đã bỏ Application), interface query (`IProductQueries`, `IOrderQueries`,
+`IReportQueries` — nằm chung trong `Domain/Abstractions`) và read-model (`*View` ở `Domain/ReadModels`)
+nằm trong Domain; Infrastructure implement. Đây là phần ĐỌC (JOIN/GROUP BY nhiều bảng), tách bạch với
+write side. Chi tiết: [05-Application.md](05-Application.md).

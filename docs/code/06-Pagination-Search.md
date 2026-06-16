@@ -5,8 +5,11 @@ Tài liệu này nối tiếp [05-Application.md](05-Application.md). Nó giải
 vào phía ĐỌC — và vì sao mỗi tính năng lại đặt ở đúng tầng của nó.
 
 > 💡 Luận điểm xuyên suốt vẫn không đổi: **một hợp đồng (interface) duy nhất, hai cách thực thi**
-> (SQL đẩy xuống DB; Mongo làm phần còn lại trong bộ nhớ). Phân trang/lọc/sort chỉ là *cách đọc*,
-> không phải *business rule*, nên chúng sống ở **Application + Infrastructure**, tuyệt đối không vào Domain.
+> (SQL đẩy xuống DB; Mongo làm phần còn lại trong bộ nhớ). Phân trang/lọc/sort là *cách đọc* (read side).
+>
+> ⚠️ **Cập nhật:** dự án đã bỏ tầng Application → hợp đồng read side (`PagedResult<T>`, `PageRequest`,
+> `I*Queries`, read-model) nay nằm trong **Domain**; cách thực thi vẫn ở **Infrastructure**. Đọc các
+> đường dẫn "Application/..." bên dưới như "Domain/..." (`Domain/Common`, `Domain/Queries`, `Domain/ReadModels`).
 
 ---
 
@@ -23,9 +26,9 @@ thì ổn; với 100.000 đơn thì:
 
 ---
 
-## B. `PagedResult<T>` và `PageRequest` — `Application/Common/PagedResult.cs`
+## B. `PagedResult<T>` và `PageRequest` — `Domain/Common/PagedResult.cs`
 
-Hai kiểu nhỏ, đặt ở **Application** vì cả Infra (tạo ra) lẫn API (trả về) đều phải thấy.
+Hai kiểu nhỏ, đặt ở **Domain/Common** vì cả Infra (tạo ra) lẫn API (trả về) đều ref Domain.
 
 ### `PagedResult<T>` — kết quả một trang + metadata
 
@@ -88,21 +91,57 @@ Sai thứ tự (vd Take trước Where) sẽ ra kết quả sai.
 
 ---
 
-## D. Tìm kiếm theo tên + Lọc nhiều tiêu chí
+## D. Gói tham số vào Query object + Tìm kiếm/Lọc
+
+### Tất cả filter gói trong MỘT `*SearchQuery` (record)
+
+`SearchAsync` **không** nhận danh sách tham số dài; nó nhận **một** object input (đặt ở `Domain/Queries/`):
+
+```csharp
+public sealed record ProductSearchQuery
+{
+    public string? Name { get; init; }
+    public Guid? CategoryId { get; init; }
+    public decimal? PriceFrom { get; init; }
+    public decimal? PriceTo { get; init; }
+    public int? MinStock { get; init; }
+    public int? MaxStock { get; init; }
+    public EntityStatus? Status { get; init; }
+    public int Page { get; init; } = 1;
+    public int PageSize { get; init; } = PageRequest.DefaultPageSize;
+    public string? SortBy { get; init; }
+    public bool SortDescending { get; init; }
+}
+
+Task<PagedResult<ProductSummaryView>> SearchAsync(ProductSearchQuery theQuery, CancellationToken ct = default);
+```
+
+Controller bind thẳng từ query-string (không cần liệt kê từng `[FromQuery]`):
+
+```csharp
+[HttpGet("search")]
+public async Task<ActionResult<PagedResult<ProductSummaryView>>> Search(
+    [FromQuery] ProductSearchQuery theQuery, CancellationToken ct)
+    => Ok(await myProductQueries.SearchAsync(theQuery, ct));
+```
+
+> 💡 ASP.NET bind theo **tên property** (PascalCase) → query-string là `?Name=ao&Page=2&SortBy=price`.
+> ⚠️ **Breaking change** so với bản cũ: tên tham số URL đổi `theName→Name`, `thePage→Page`, `theSortBy→SortBy`...
+> 💡 Lợi: thêm filter mới chỉ sửa record, **không đổi chữ ký** port; an toàn compile-time.
 
 ### Quy ước "filter tuỳ chọn": `null = không lọc`
 
-Mọi tham số lọc đều nullable và mặc định `null`. Code chỉ thêm `.Where(...)` khi tham số có giá trị:
+Mọi property lọc đều nullable. Code chỉ thêm `.Where(...)` khi nó có giá trị:
 
 ```csharp
-if (theCategoryId is not null)              // chỉ lọc khi người dùng truyền
-    aQuery = aQuery.Where(x => x.p.CategoryId == theCategoryId);
+if (theQuery.CategoryId is not null)              // chỉ lọc khi người dùng truyền
+    aQuery = aQuery.Where(x => x.p.CategoryId == theQuery.CategoryId);
 
-if (thePriceFrom is not null)               // khoảng giá: cận dưới
-    aQuery = aQuery.Where(x => x.p.PriceAmount >= thePriceFrom);
+if (theQuery.PriceFrom is not null)               // khoảng giá: cận dưới
+    aQuery = aQuery.Where(x => x.p.PriceAmount >= theQuery.PriceFrom);
 
-if (theMaxStock is not null)                // khoảng tồn kho: cận trên (vd hàng sắp hết)
-    aQuery = aQuery.Where(x => x.p.StockQuantity <= theMaxStock);
+if (theQuery.MaxStock is not null)                // khoảng tồn kho: cận trên (vd hàng sắp hết)
+    aQuery = aQuery.Where(x => x.p.StockQuantity <= theQuery.MaxStock);
 ```
 
 → `aQuery` được **bồi (compose)** dần. Vì là `IQueryable`, **chưa chạy** DB cho tới khi gọi
@@ -111,46 +150,48 @@ if (theMaxStock is not null)                // khoảng tồn kho: cận trên (
 ### Tìm theo tên: `Contains`
 
 ```csharp
-if (!string.IsNullOrWhiteSpace(theName))
+if (!string.IsNullOrWhiteSpace(theQuery.Name))
 {
-    var aName = theName.Trim();
+    var aName = theQuery.Name.Trim();
     aQuery = aQuery.Where(x => x.p.Name.Contains(aName));   // SQL → LIKE '%aName%'
 }
 ```
 
-### Lọc Product (catalogue) — `IProductQueries.SearchAsync`
+### Lọc Product (catalogue) — `IProductQueries.SearchAsync(ProductSearchQuery)`
 
-| Tham số | Ý nghĩa | Dịch ra SQL |
+| Property | Ý nghĩa | Dịch ra SQL |
 |---------|---------|-------------|
-| `theName` | tên chứa chuỗi | `Name LIKE '%..%'` |
-| `theCategoryId` | loại hàng | `CategoryId = @id` |
-| `thePriceFrom` / `thePriceTo` | khoảng giá | `PriceAmount BETWEEN` |
-| `theMinStock` / `theMaxStock` | khoảng tồn kho | `StockQuantity BETWEEN` |
-| `theStatus` | Active/Inactive | `Status = @s` (đã xoá mềm luôn bị loại) |
+| `Name` | tên chứa chuỗi | `Name LIKE '%..%'` |
+| `CategoryId` | loại hàng | `CategoryId = @id` |
+| `PriceFrom` / `PriceTo` | khoảng giá | `PriceAmount BETWEEN` |
+| `MinStock` / `MaxStock` | khoảng tồn kho | `StockQuantity BETWEEN` |
+| `Status` | Active/Inactive | `Status = @s` (đã xoá mềm luôn bị loại) |
 
-### Lọc Order (mở rộng) — `IOrderQueries.SearchAsync`
+### Các Search khác (cùng khuôn)
 
-Thêm `theCustomerName` / `theEmployeeName` (contains) bên cạnh các filter cũ (id, status, khoảng ngày).
+Mỗi nhóm có `*SearchQuery` riêng: `OrderSearchQuery` (CustomerId/EmployeeId, CustomerName/EmployeeName contains,
+Status, FromUtc/ToUtc), `CustomerSearchQuery` (Name/Email/PhoneNumber/City, Status), `EmployeeSearchQuery`
+(Name/Position, Status), `PaymentSearchQuery` (OrderId, Method, Status, FromUtc/ToUtc), `CategorySearchQuery` (Name).
 
 ---
 
 ## E. Sắp xếp (sort) — cái "query người dùng truyền vào" cần được xử lý
 
 Phân trang ban đầu chỉ xử lý *số trang*; còn khi người dùng muốn "sắp theo giá giảm dần" thì sao?
-Ta nhận **tên cột** (`theSortBy`) + **chiều** (`theSortDescending`).
+Ta nhận **tên cột** (`theQuery.SortBy`) + **chiều** (`theQuery.SortDescending`).
 
 > ⚠️ **Tuyệt đối không** dịch thẳng chuỗi người dùng thành cột/biểu thức (nguy cơ lỗi & injection).
 > Ta **whitelist**: chỉ chấp nhận một số cột đã biết, còn lại rơi về mặc định an toàn.
 
 ```csharp
-aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+aQuery = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
 {
-    "price" => theSortDescending ? aQuery.OrderByDescending(x => x.p.PriceAmount)
-                                 : aQuery.OrderBy(x => x.p.PriceAmount),
-    "stock" => theSortDescending ? aQuery.OrderByDescending(x => x.p.StockQuantity)
-                                 : aQuery.OrderBy(x => x.p.StockQuantity),
-    _       => theSortDescending ? aQuery.OrderByDescending(x => x.p.Name)   // mặc định: name
-                                 : aQuery.OrderBy(x => x.p.Name)
+    "price" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.PriceAmount)
+                                       : aQuery.OrderBy(x => x.p.PriceAmount),
+    "stock" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.StockQuantity)
+                                       : aQuery.OrderBy(x => x.p.StockQuantity),
+    _       => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.Name)   // mặc định: name
+                                       : aQuery.OrderBy(x => x.p.Name)
 };
 ```
 
@@ -186,7 +227,7 @@ collection khác → **tìm ID trước, rồi lọc theo ID**:
 
 ```csharp
 // 1. Tìm các customer có tên khớp → danh sách Id
-var aCustomerIdFilter = await ResolveCustomerIdsByNameAsync(theCustomerName, ct);
+var aCustomerIdFilter = await ResolveCustomerIdsByNameAsync(theQuery.CustomerName, ct);
 // 2. Lọc orders theo tập Id đó ($in) — paging vẫn chạy ở DB
 if (aCustomerIdFilter is not null)
     aQuery = aQuery.Where(o => aCustomerIdFilter.Contains(o.CustomerId));
@@ -212,28 +253,33 @@ vào việc kho lưu trữ có JOIN hay không.
 
 ## G. Endpoint
 
-| Method | Tham số chính | Trả về |
+| Method | Tham số chính (PascalCase) | Trả về |
 |--------|---------------|--------|
-| `GET /api/products/search` | `theName, theCategoryId, thePriceFrom/To, theMinStock/MaxStock, theStatus, theSortBy, theSortDescending, thePage, thePageSize` | `PagedResult<ProductSummaryView>` |
-| `GET /api/orders` | `theCustomerId/Name, theEmployeeId/Name, theStatus, theFromUtc/ToUtc, theSortBy, theSortDescending, thePage, thePageSize` | `PagedResult<OrderSummaryView>` |
-| `GET /api/reports/best-selling-products` | `thePage, thePageSize` | `PagedResult<BestSellingProductView>` |
+| `GET /api/products/search` | `Name, CategoryId, PriceFrom/To, MinStock/MaxStock, Status, SortBy, SortDescending, Page, PageSize` | `PagedResult<ProductSummaryView>` |
+| `GET /api/orders` | `CustomerId/Name, EmployeeId/Name, Status, FromUtc/ToUtc, SortBy, SortDescending, Page, PageSize` | `PagedResult<OrderSummaryView>` |
+| `GET /api/customers/search` | `Name, Email, PhoneNumber, City, Status, SortBy, SortDescending, Page, PageSize` | `PagedResult<CustomerSummaryView>` |
+| `GET /api/employees/search` | `Name, Position, Status, SortBy, SortDescending, Page, PageSize` | `PagedResult<EmployeeSummaryView>` |
+| `GET /api/payments/search` | `OrderId, Method, Status, FromUtc/ToUtc, SortBy, SortDescending, Page, PageSize` | `PagedResult<PaymentSummaryView>` |
+| `GET /api/categories/search` | `Name, SortDescending, Page, PageSize` | `PagedResult<CategorySummaryView>` |
+| `GET /api/reports/best-selling-products`, `low-stock-products` | `Page, PageSize` (+ `Threshold`) | `PagedResult<…>` |
 
 Ví dụ:
 ```
-GET /api/products/search?theName=áo&thePriceFrom=100000&theMaxStock=5&theSortBy=price&theSortDescending=true&thePage=1&thePageSize=20
-GET /api/orders?theCustomerName=an&theStatus=Confirmed&theSortBy=totalAmount&theSortDescending=true&thePage=2
+GET /api/products/search?Name=áo&PriceFrom=100000&MaxStock=5&SortBy=price&SortDescending=true&Page=1&PageSize=20
+GET /api/orders?CustomerName=an&Status=Confirmed&SortBy=totalAmount&SortDescending=true&Page=2
 ```
 
-> ⚠️ **Breaking change về hợp đồng HTTP:** 2 endpoint `GET /api/orders` và `best-selling-products`
-> nay trả **object** `{ items, page, pageSize, totalCount, totalPages, hasNext, hasPrevious }`
-> thay vì mảng thuần. Client phải đọc `response.items`.
+> ⚠️ **Breaking change về hợp đồng HTTP (2 điểm):**
+> 1. Tên tham số query-string đổi sang **PascalCase** (`theName→Name`, `thePage→Page`...) do bind từ `*SearchQuery`.
+> 2. Toàn bộ response nay bọc trong **envelope `ApiResponse`** (xem [04-API.md](04-API.md) mục E): dữ liệu trang
+>    nằm ở `result` → client đọc `response.result.items`, `response.result.totalCount`...
 
 ---
 
 ## H. Nguyên tắc rút ra (ghi nhớ)
 
-1. **Phân trang/lọc/sort là *cách đọc*, không phải business** → nằm ở Application + Infrastructure,
-   không bao giờ ở Domain.
+1. **Phân trang/lọc/sort là *cách đọc*, không phải business** → hợp đồng ở Domain (read side), cách
+   thực thi ở Infrastructure. (Trước đây tách ở Application; nay gộp Domain do dự án còn 3 tầng.)
 2. **Luôn trả `TotalCount`** cùng dữ liệu trang — thiếu nó UI không phân trang được.
 3. **Kẹp (clamp) input một chỗ** (`PageRequest`): chặn page 0 và pageSize khổng lồ.
 4. **Whitelist cột sort** — không dịch thẳng chuỗi người dùng thành cột.

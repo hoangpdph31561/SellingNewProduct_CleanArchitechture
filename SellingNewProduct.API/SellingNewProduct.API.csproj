@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SellingNewProduct.Domain\SellingNewProduct.Domain.csproj" />
-    <ProjectReference Include="..\SellingNewProduct.Application\SellingNewProduct.Application.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.SqlServer\SellingNewProduct.Infrastructure.SqlServer.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.MongoDB\SellingNewProduct.Infrastructure.MongoDB.csproj" />
   </ItemGroup>

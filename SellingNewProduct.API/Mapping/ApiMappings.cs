@@ -1,5 +1,6 @@
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.Domain.Categories;
+using SellingNewProduct.Domain.Commands;
 using SellingNewProduct.Domain.Customers;
 using SellingNewProduct.Domain.Employees;
 using SellingNewProduct.Domain.Orders;
@@ -10,11 +11,61 @@ using SellingNewProduct.Domain.ValueObjects;
 
 namespace SellingNewProduct.API.Mapping;
 
-/// <summary>Manual mapping from domain entities to API response DTOs.</summary>
+/// <summary>
+/// Manual mapping at the API boundary: domain entities to response DTOs, and request DTOs
+/// to domain command objects. Kept explicit on purpose (no AutoMapper) so mapping mistakes
+/// surface at compile time and encapsulation is preserved.
+/// </summary>
 internal static class ApiMappings
 {
     public static AddressDto ToDto(this Address theAddress) =>
         new(theAddress.Street, theAddress.Ward, theAddress.District, theAddress.City, theAddress.Country);
+
+    // ----- Request DTO -> domain command -----
+
+    public static CreateProductCommand ToCommand(this CreateProductRequest theRequest) =>
+        new(theRequest.Name,
+            theRequest.Sku,
+            theRequest.Color,
+            theRequest.Size,
+            theRequest.Price,
+            theRequest.Currency,
+            theRequest.StockQuantity,
+            theRequest.CategoryId);
+
+    public static CreateCategoryCommand ToCommand(this CreateCategoryRequest theRequest) =>
+        new(theRequest.Name, theRequest.Description);
+
+    public static CreateCustomerCommand ToCommand(this CreateCustomerRequest theRequest) =>
+        new(theRequest.FullName,
+            theRequest.Email,
+            theRequest.PhoneNumber,
+            theRequest.Address.Street,
+            theRequest.Address.Ward,
+            theRequest.Address.District,
+            theRequest.Address.City,
+            theRequest.Address.Country,
+            theRequest.UserId);
+
+    public static CreateEmployeeCommand ToCommand(this CreateEmployeeRequest theRequest) =>
+        new(theRequest.FullName, theRequest.Position, theRequest.HireDate, theRequest.UserId);
+
+    public static CreateOrderCommand ToCommand(this CreateOrderRequest theRequest) =>
+        new(theRequest.CustomerId,
+            theRequest.EmployeeId,
+            theRequest.ShippingAddress.Street,
+            theRequest.ShippingAddress.Ward,
+            theRequest.ShippingAddress.District,
+            theRequest.ShippingAddress.City,
+            theRequest.ShippingAddress.Country);
+
+    public static CreatePaymentCommand ToCommand(this CreatePaymentRequest theRequest) =>
+        new(theRequest.OrderId, theRequest.Amount, theRequest.Currency, theRequest.Method);
+
+    public static CreateUserCommand ToCommand(this CreateUserRequest theRequest) =>
+        new(theRequest.Username, theRequest.Password, theRequest.Email, theRequest.Role);
+
+    // ----- Domain entity -> response DTO -----
 
     public static CategoryResponse ToResponse(this Category theCategory) =>
         new(theCategory.Id, theCategory.Name, theCategory.Description, theCategory.Status.ToString());

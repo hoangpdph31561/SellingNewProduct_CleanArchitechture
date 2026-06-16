@@ -1,16 +1,14 @@
-using FluentValidation;
+using SellingNewProduct.API;
 using SellingNewProduct.API.Middleware;
-using SellingNewProduct.API.Validators;
+using SellingNewProduct.Domain;
 using SellingNewProduct.Infrastructure.MongoDB;
 using SellingNewProduct.Infrastructure.SqlServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-builder.Services.AddOpenApi();
-
-// API-level validators (request shape).
-builder.Services.AddValidatorsFromAssemblyContaining<CreateOrderRequestValidator>();
+// Each layer registers its own services through a dedicated extension:
+builder.Services.AddApiServices();      // presentation: controllers, filter, OpenAPI, validators, hasher
+builder.Services.AddDomainServices();   // business logic services (API calls these, never repositories)
 
 // Composition root: pick ONE database implementation. This is the only place
 // in the whole solution that knows which database is in use. The domain and

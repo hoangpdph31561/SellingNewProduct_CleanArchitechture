@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 
 namespace SellingNewProduct.Infrastructure.SqlServer.Queries;
@@ -22,21 +22,49 @@ internal sealed class SqlServerProductQueries : IProductQueries
         myAppDbContext = theAppDbContext;
     }
 
+    public async Task<ProductSummaryView?> GetByIdAsync(Guid theProductId, CancellationToken theCancellationToken = default)
+    {
+        // Same JOIN as the search, narrowed to one product.
+        var aRow = await (
+            from p in myAppDbContext.Products.AsNoTracking()
+            join c in myAppDbContext.Categories on p.CategoryId equals c.Id
+            where p.Id == theProductId
+            select new
+            {
+                p.Id,
+                p.Name,
+                p.Sku,
+                p.Color,
+                p.Size,
+                p.PriceAmount,
+                p.PriceCurrency,
+                p.StockQuantity,
+                p.CategoryId,
+                CategoryName = c.Name,
+                p.Status
+            }).FirstOrDefaultAsync(theCancellationToken);
+
+        return aRow is null
+            ? null
+            : new ProductSummaryView(
+                aRow.Id,
+                aRow.Name,
+                aRow.Sku,
+                aRow.Color,
+                aRow.Size,
+                aRow.PriceAmount,
+                aRow.PriceCurrency,
+                aRow.StockQuantity,
+                aRow.CategoryId,
+                aRow.CategoryName,
+                ((EntityStatus)aRow.Status).ToString());
+    }
+
     public async Task<PagedResult<ProductSummaryView>> SearchAsync(
-        string? theName = null,
-        Guid? theCategoryId = null,
-        decimal? thePriceFrom = null,
-        decimal? thePriceTo = null,
-        int? theMinStock = null,
-        int? theMaxStock = null,
-        EntityStatus? theStatus = null,
-        int thePage = 1,
-        int thePageSize = PageRequest.DefaultPageSize,
-        string? theSortBy = null,
-        bool theSortDescending = false,
+        ProductSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aPage = new PageRequest(thePage, thePageSize);
+        var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
         // JOIN Products x Categories so each row carries the category name (loại hàng).
         var aQuery =
@@ -44,51 +72,51 @@ internal sealed class SqlServerProductQueries : IProductQueries
             join c in myAppDbContext.Categories on p.CategoryId equals c.Id
             select new { p, CategoryName = c.Name };
 
-        if (!string.IsNullOrWhiteSpace(theName))
+        if (!string.IsNullOrWhiteSpace(theQuery.Name))
         {
-            var aName = theName.Trim();
+            var aName = theQuery.Name.Trim();
             aQuery = aQuery.Where(x => x.p.Name.Contains(aName));
         }
 
-        if (theCategoryId is not null)
+        if (theQuery.CategoryId is not null)
         {
-            aQuery = aQuery.Where(x => x.p.CategoryId == theCategoryId);
+            aQuery = aQuery.Where(x => x.p.CategoryId == theQuery.CategoryId);
         }
 
-        if (thePriceFrom is not null)
+        if (theQuery.PriceFrom is not null)
         {
-            aQuery = aQuery.Where(x => x.p.PriceAmount >= thePriceFrom);
+            aQuery = aQuery.Where(x => x.p.PriceAmount >= theQuery.PriceFrom);
         }
 
-        if (thePriceTo is not null)
+        if (theQuery.PriceTo is not null)
         {
-            aQuery = aQuery.Where(x => x.p.PriceAmount <= thePriceTo);
+            aQuery = aQuery.Where(x => x.p.PriceAmount <= theQuery.PriceTo);
         }
 
-        if (theMinStock is not null)
+        if (theQuery.MinStock is not null)
         {
-            aQuery = aQuery.Where(x => x.p.StockQuantity >= theMinStock);
+            aQuery = aQuery.Where(x => x.p.StockQuantity >= theQuery.MinStock);
         }
 
-        if (theMaxStock is not null)
+        if (theQuery.MaxStock is not null)
         {
-            aQuery = aQuery.Where(x => x.p.StockQuantity <= theMaxStock);
+            aQuery = aQuery.Where(x => x.p.StockQuantity <= theQuery.MaxStock);
         }
 
-        if (theStatus is not null)
+        if (theQuery.Status is not null)
         {
-            var aStatusValue = (int)theStatus.Value;
+            var aStatusValue = (int)theQuery.Status.Value;
             aQuery = aQuery.Where(x => x.p.Status == aStatusValue);
         }
 
         // Map the requested column name to an ORDER BY (default: name). Whitelisting the
         // column keeps the contract storage-agnostic and avoids any "sort by arbitrary
         // string" surprises.
-        aQuery = (theSortBy?.Trim().ToLowerInvariant()) switch
+        aQuery = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
         {
-            "price" => theSortDescending ? aQuery.OrderByDescending(x => x.p.PriceAmount) : aQuery.OrderBy(x => x.p.PriceAmount),
-            "stock" => theSortDescending ? aQuery.OrderByDescending(x => x.p.StockQuantity) : aQuery.OrderBy(x => x.p.StockQuantity),
-            _ => theSortDescending ? aQuery.OrderByDescending(x => x.p.Name) : aQuery.OrderBy(x => x.p.Name)
+            "price" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.PriceAmount) : aQuery.OrderBy(x => x.p.PriceAmount),
+            "stock" => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.StockQuantity) : aQuery.OrderBy(x => x.p.StockQuantity),
+            _ => theQuery.SortDescending ? aQuery.OrderByDescending(x => x.p.Name) : aQuery.OrderBy(x => x.p.Name)
         };
 
         var aTotalCount = await aQuery.CountAsync(theCancellationToken);

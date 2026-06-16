@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Application.Common;
-using SellingNewProduct.Application.Queries;
-using SellingNewProduct.Application.ReadModels;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Orders;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 
@@ -102,5 +101,109 @@ internal sealed class MongoReportQueries : IReportQueries
             })
             .OrderByDescending(v => v.TotalRevenue)
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<CategorySalesView>> GetSalesByCategoryAsync(CancellationToken theCancellationToken = default)
+    {
+        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+            .Where(o => o.Status != DeletedStatus &&
+                        (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
+            .ToListAsync(theCancellationToken);
+
+        var aProducts = await myMongoAppDbContext.Products.AsNoTracking().ToListAsync(theCancellationToken);
+        var aCategories = await myMongoAppDbContext.Categories.AsNoTracking().ToListAsync(theCancellationToken);
+
+        var aProductById = aProducts.ToDictionary(p => p.Id);
+        var aCategoryById = aCategories.ToDictionary(c => c.Id);
+
+        // Flatten the embedded order lines, resolve each to its product's category, then group.
+        return aOrders
+            .SelectMany(o => o.Details)
+            .Select(d =>
+            {
+                aProductById.TryGetValue(d.ProductId, out var aProduct);
+                return new
+                {
+                    CategoryId = aProduct?.CategoryId ?? Guid.Empty,
+                    d.Quantity,
+                    Revenue = d.UnitPriceAmount * d.Quantity
+                };
+            })
+            .GroupBy(x => x.CategoryId)
+            .Select(g => new CategorySalesView(
+                g.Key,
+                aCategoryById.TryGetValue(g.Key, out var aCat) ? aCat.Name : "(unknown)",
+                g.Sum(x => x.Quantity),
+                g.Sum(x => x.Revenue)))
+            .OrderByDescending(v => v.TotalRevenue)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<DailySalesView>> GetDailySalesAsync(
+        DateTime? theFromUtc = null,
+        DateTime? theToUtc = null,
+        CancellationToken theCancellationToken = default)
+    {
+        var aQuery = myMongoAppDbContext.Orders.AsNoTracking()
+            .Where(o => o.Status != DeletedStatus &&
+                        (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped));
+
+        if (theFromUtc is not null)
+        {
+            aQuery = aQuery.Where(o => o.OrderDate >= theFromUtc);
+        }
+
+        if (theToUtc is not null)
+        {
+            aQuery = aQuery.Where(o => o.OrderDate <= theToUtc);
+        }
+
+        var aOrders = await aQuery.ToListAsync(theCancellationToken);
+
+        // Group by the date part in memory (Mongo has no GROUP BY on a computed date here).
+        return aOrders
+            .GroupBy(o => o.OrderDate.Date)
+            .Select(g => new DailySalesView(g.Key, g.Count(), g.Sum(o => o.TotalAmount)))
+            .OrderBy(v => v.Date)
+            .ToList();
+    }
+
+    public async Task<PagedResult<LowStockProductView>> GetLowStockProductsAsync(
+        int theThreshold = 5,
+        int thePage = 1,
+        int thePageSize = PageRequest.DefaultPageSize,
+        CancellationToken theCancellationToken = default)
+    {
+        var aPage = new PageRequest(thePage, thePageSize);
+
+        // The stock filter is a simple comparison, so it runs on the database.
+        var aProducts = await myMongoAppDbContext.Products.AsNoTracking()
+            .Where(p => p.Status != DeletedStatus && p.StockQuantity <= theThreshold)
+            .ToListAsync(theCancellationToken);
+
+        var aSorted = aProducts.OrderBy(p => p.StockQuantity).ToList();
+        var aTotalCount = aSorted.Count;
+
+        var aPageDocs = aSorted
+            .Skip(aPage.Skip)
+            .Take(aPage.PageSize)
+            .ToList();
+
+        // Stitch the category name for this page's products only.
+        var aCategoryIds = aPageDocs.Select(p => p.CategoryId).Distinct().ToList();
+        var aCategoryNameById = (await myMongoAppDbContext.Categories.AsNoTracking()
+            .Where(c => aCategoryIds.Contains(c.Id))
+            .ToListAsync(theCancellationToken))
+            .ToDictionary(c => c.Id, c => c.Name);
+
+        var aItems = aPageDocs
+            .Select(p => new LowStockProductView(
+                p.Id,
+                p.Name,
+                aCategoryNameById.TryGetValue(p.CategoryId, out var aName) ? aName : "(unknown)",
+                p.StockQuantity))
+            .ToList();
+
+        return new PagedResult<LowStockProductView>(aItems, aPage.Page, aPage.PageSize, aTotalCount);
     }
 }
