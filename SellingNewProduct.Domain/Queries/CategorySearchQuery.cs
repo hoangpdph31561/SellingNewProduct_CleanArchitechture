@@ -3,7 +3,7 @@ using SellingNewProduct.Domain.Common;
 namespace SellingNewProduct.Domain.Queries;
 
 /// <summary>
-/// Input for <c>ICategoryQueries.SearchAsync</c>: the optional name filter plus paging and
+/// Input for <c>ICategoryService.SearchAsync</c>: the optional name filter plus paging and
 /// sort direction (results are always ordered by name). <c>Name</c> null = no filter.
 /// </summary>
 public sealed record CategorySearchQuery

@@ -30,6 +30,15 @@ public sealed class CreateProductRequestValidator : AbstractValidator<CreateProd
     }
 }
 
+public sealed class BulkCreateProductsRequestValidator : AbstractValidator<BulkCreateProductsRequest>
+{
+    public BulkCreateProductsRequestValidator()
+    {
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).SetValidator(new CreateProductRequestValidator());
+    }
+}
+
 public sealed class AddressDtoValidator : AbstractValidator<AddressDto>
 {
     public AddressDtoValidator()
@@ -79,22 +88,24 @@ public sealed class CreateEmployeeRequestValidator : AbstractValidator<CreateEmp
     }
 }
 
-public sealed class CreateOrderRequestValidator : AbstractValidator<CreateOrderRequest>
+public sealed class OrderItemRequestValidator : AbstractValidator<OrderItemRequest>
 {
-    public CreateOrderRequestValidator()
+    public OrderItemRequestValidator()
+    {
+        RuleFor(x => x.ProductId).NotEmpty();
+        RuleFor(x => x.Quantity).GreaterThan(0);
+    }
+}
+
+public sealed class PlaceOrderRequestValidator : AbstractValidator<PlaceOrderRequest>
+{
+    public PlaceOrderRequestValidator()
     {
         RuleFor(x => x.CustomerId).NotEmpty();
         RuleFor(x => x.EmployeeId).NotEmpty();
         RuleFor(x => x.ShippingAddress).NotNull().SetValidator(new AddressDtoValidator());
-    }
-}
-
-public sealed class AddOrderDetailRequestValidator : AbstractValidator<AddOrderDetailRequest>
-{
-    public AddOrderDetailRequestValidator()
-    {
-        RuleFor(x => x.ProductId).NotEmpty();
-        RuleFor(x => x.Quantity).GreaterThan(0);
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).SetValidator(new OrderItemRequestValidator());
     }
 }
 

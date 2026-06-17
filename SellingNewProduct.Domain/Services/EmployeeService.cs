@@ -2,6 +2,8 @@ using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Commands;
 using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Employees;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Repositories;
 
 namespace SellingNewProduct.Domain.Services;
@@ -36,4 +38,10 @@ internal sealed class EmployeeService : IEmployeeService
         await myEmployeeRepository.AddAsync(aEmployee, theCancellationToken);
         return aEmployee;
     }
+
+    public Task<EmployeeSummaryView?> GetSummaryByIdAsync(Guid theEmployeeId, CancellationToken theCancellationToken = default)
+        => myEmployeeRepository.GetSummaryByIdAsync(theEmployeeId, theCancellationToken);
+
+    public Task<PagedResult<EmployeeSummaryView>> SearchAsync(EmployeeSearchQuery theQuery, CancellationToken theCancellationToken = default)
+        => myEmployeeRepository.SearchAsync(theQuery, theCancellationToken);
 }

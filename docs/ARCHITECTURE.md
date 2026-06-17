@@ -39,8 +39,8 @@ không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là �
 │ Infrastructure.       │ │ Infrastructure.       │
 │ SqlServer             │ │ MongoDB               │
 │ DbContext · Record ·  │ │ DbContext · Document ·│
-│ Repository · Mapper · │ │ Repository · Mapper · │
-│ Queries (JOIN)        │ │ Queries (stitch)      │
+│ Repository · Mapper   │ │ Repository · Mapper   │
+│ (ghi + đọc/JOIN)      │ │ (ghi + đọc/stitch)    │
 └───────────┬───────────┘ └───────────┬──────────┘
             │                         │
             └────────────┬────────────┘
@@ -49,14 +49,15 @@ không phải trong cùng. "Trong cùng" = business = Domain. Đây chính là �
             │              Domain                    │
             │  Entity · ValueObject · AggregateRoot │
             │  Event · IRepository (interface)      │
-            │  Domain Service (I*Service) ← write   │
-            │  IQueries + ReadModel (View) ← read   │
+            │  Domain Service (I*Service)           │
+            │   — gói CẢ write lẫn read (ReadModel) │
             └──────────────────────────────────────┘
 ```
 
 **Quy tắc vàng:** Mũi tên chỉ vào trong. Domain ở trung tâm, không có mũi tên nào đi ra khỏi nó.
-Chỉ có **3 tầng**: API → (Domain) ← Infrastructure. Cả write side (Domain Service) lẫn read side
-(IQueries + ReadModel) đều nằm trong Domain; Infrastructure implement cả hai.
+Chỉ có **3 tầng**: API → (Domain) ← Infrastructure. API chỉ nói chuyện với **một cổng duy nhất mỗi
+module là `I*Service`**; service gọi `I*Repository`. Cả ghi (aggregate) lẫn đọc (read-model `*View`)
+đều đi qua cặp Service→Repository này — KHÔNG còn cổng `I*Queries` riêng (xem §7b).
 
 ## 3. Vì sao tách persistence model khỏi domain entity?
 
@@ -76,15 +77,17 @@ Hai mục đích khác nhau → tách riêng. Mỗi Infrastructure tự định 
 ## 4. Luồng một request (ví dụ: tạo Order)
 
 ```
-HTTP POST /api/orders
+HTTP POST /api/orders   (đặt cả đơn + toàn bộ item trong 1 call)
    │
    ▼
-[API] OrdersController nhận CreateOrderRequest (DTO)
-   │  → FluentValidation kiểm tra FORMAT request (không trống, độ dài…)
-   │  → gọi IOrderService.CreateAsync(...) — KHÔNG đụng repository, KHÔNG new entity
+[API] OrdersController nhận PlaceOrderRequest (DTO, gồm danh sách Items)
+   │  → FluentValidationActionFilter tự validate FORMAT request TRƯỚC khi vào action
+   │    (controller KHÔNG inject/gọi validator nữa — xem §8)
+   │  → gọi IOrderService.PlaceAsync(...) — KHÔNG đụng repository, KHÔNG new entity
    ▼
-[Domain] OrderService: business logic (vd: Customer/Employee phải tồn tại)
-   │  → Order.Create(...) chạy invariant của aggregate, sinh Domain Event nếu cần
+[Domain] OrderService: business logic (Customer/Employee phải tồn tại; mỗi Product
+   │  phải Active + đủ tồn kho); Order.Create(...) + AddDetail từng dòng (snapshot giá)
+   │  → Order ở trạng thái Draft, sinh Domain Event khi Confirm sau này
    │  → gọi IOrderRepository.AddAsync(order)
    ▼
 [Infrastructure] IOrderRepository.AddAsync(order)
@@ -142,28 +145,33 @@ Mỗi Infra cung cấp một extension method `AddXxxInfrastructure(...)` để 
   Lưu ý: provider Mongo **không hỗ trợ migration** như SQL — schema tạo theo nhu cầu;
   ta cấu hình mapping bằng `OnModelCreating` (ToCollection) thay vì `ToTable`.
 
-## 7b. Read side — Write đi qua aggregate, Read đi thẳng JOIN (CQRS-lite)
+## 7b. Read side — gộp vào Service + Repository (KHÔNG còn cổng `I*Queries` riêng)
 
-Repository (`IOrderRepository`) trả về **aggregate** `Order` để **thực thi nghiệp vụ** (Confirm, Ship…).
-Aggregate chỉ tham chiếu Customer/Employee **bằng id**, nên nó KHÔNG chứa `CustomerName`. Đúng theo DDD:
-một aggregate không ôm dữ liệu của aggregate khác (tránh dữ liệu lỗi thời).
+Việc ghi trả về **aggregate** `Order` để **thực thi nghiệp vụ** (Confirm, Ship…). Aggregate chỉ tham
+chiếu Customer/Employee **bằng id**, nên nó KHÔNG chứa `CustomerName`. Đúng DDD: một aggregate không ôm
+dữ liệu của aggregate khác (tránh dữ liệu lỗi thời).
 
-Vậy khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mua bao nhiêu đơn", ta dùng một đường riêng:
+Khi cần **hiển thị** "đơn này của khách nào, ai bán, đã mua bao nhiêu đơn", ta vẫn cần dữ liệu ghép
+nhiều bảng. **Trước đây** dự án tách một cổng `I*Queries` riêng (CQRS-lite). **Hiện tại** đã gộp lại:
+API chỉ dùng `I*Service`, service chỉ dùng `I*Repository`, và **repository được phép trả read-model**.
 
-| | Write side | Read side |
+| | Ghi (aggregate) | Đọc (read-model) |
 |---|---|---|
-| Hợp đồng | `IOrderRepository` + `IOrderService` (Domain) | `IOrderQueries`, `IReportQueries` (Domain) |
-| Trả về | Aggregate `Order` | Read-model phẳng (`OrderDetailView`…) |
-| Mục đích | Chạy business rule | Hiển thị / báo cáo nhanh |
-| Ghép nhiều bảng | ❌ (vỡ ranh giới aggregate) | ✅ JOIN/GROUP BY |
+| Cổng API thấy | `I*Service` | `I*Service` (cùng cổng) |
+| Thực thi | `I*Repository` trả aggregate `Order` | `I*Repository` trả `OrderDetailView`… |
+| Ghép nhiều bảng | ❌ (vỡ ranh giới aggregate) | ✅ JOIN/GROUP BY ngay trong repository |
 
-**Read-model đặt ở đâu?** Dự án gộp về **3 tầng** (không có Application), nên cả interface query
-(`IOrderQueries`) lẫn read-model (`OrderDetailView`) đều nằm trong **Domain** (`Domain/Queries`,
-`Domain/ReadModels`); Infrastructure implement query. Đánh đổi: Domain "rộng" hơn (ôm cả read-model
-hiển thị) để giữ đúng 3 tầng API → Domain ← Infrastructure. Read-model vẫn là kiểu chỉ-đọc, tách bạch
-với aggregate (không trộn vào entity nghiệp vụ).
+**Vì sao gộp?** Để mỗi module có **một cổng vào duy nhất** (`I*Service`), API không phải biết tới
+"queries". Đánh đổi đã chấp nhận: repository không còn "thuần aggregate" mà trả cả read-model — chấp
+nhận được cho mục tiêu học (gộp triệt để). Method đọc thuộc aggregate nào thì nằm ở service/repository
+của aggregate đó (vd lịch sử đơn của khách = dữ liệu Order → `IOrderService.GetCustomerHistoryAsync`;
+`CustomersController` inject thêm `IOrderService`).
 
-**Mỗi Infrastructure tự chọn chiến lược thực thi cùng một interface:**
+**Báo cáo (Reports) là ca đặc biệt:** không có aggregate "Report" nào, nên có `IReportService` +
+`IReportRepository` riêng (repository trả read-model thuần). Input đọc vẫn gói trong record `*SearchQuery`
+ở `Domain/Queries`; read-model `*View` ở `Domain/ReadModels`.
+
+**Mỗi Infrastructure tự chọn chiến lược thực thi cùng một interface (giờ là phần read của repository):**
 - SQL Server: LINQ `join` → EF Core dịch thành **một câu SQL JOIN** chạy trên DB.
 - MongoDB: không JOIN quan hệ → **nạp document rồi ghép (stitch) trong bộ nhớ** (hoặc denormalize/`$lookup`).
 
@@ -176,7 +184,8 @@ Danh sách thật luôn cần **phân trang** (đừng trả cả bảng), **tì
 interface query) + cách thực thi ở **Infrastructure**.
 
 - **Domain**: `PagedResult<T>` (dữ liệu 1 trang + `TotalCount`/`TotalPages`/`HasNext`) và `PageRequest`
-  nằm trong `Domain/Common`; interface `IProductQueries`/`IOrderQueries` (`Domain/Queries`) nhận filter + `sortBy`/`sortDescending`.
+  nằm trong `Domain/Common`; record input `*SearchQuery` (`Domain/Queries`) gói filter + `sortBy`/`sortDescending`,
+  được nhận bởi method `SearchAsync` trên `I*Service` (đẩy xuống `I*Repository`).
 - **SQL Server**: đẩy hết `WHERE`/`ORDER BY`/`COUNT`/`OFFSET-FETCH` xuống DB; tên hiển thị lấy bằng JOIN.
 - **MongoDB**: đẩy phần làm được xuống DB; tìm theo tên cross-collection thì *resolve Id trước rồi `$in`*;
   phần không JOIN được (vd sort theo tên ghép) xử lý/giới hạn ở bộ nhớ — một minh hoạ cho khác biệt thực thi.
@@ -189,12 +198,20 @@ Domain ném exception, API có middleware chuyển thành ProblemDetails chuẩn
 
 | Exception (Domain) | HTTP | Khi nào |
 |---|---|---|
-| `DomainException` | 400 | Vi phạm invariant / business rule (vd: tên category trùng) |
+| `DomainException` | 400 | Vi phạm invariant / business rule (vd: xác nhận đơn rỗng) |
+| `ConflictException` | 409 | Xung đột/trùng/đụng trạng thái (vd: tên category trùng, SKU trùng, không đủ tồn kho, trả vượt nợ) |
 | `NotFoundException` | 404 | Tham chiếu tới entity không tồn tại (vd: tạo Product với CategoryId sai) |
-| `ValidationException` (FluentValidation, ở API) | 400 | Sai FORMAT request (trống, độ dài…) |
+| `ValidationException` (FluentValidation) | 400 | Sai FORMAT request (trống, độ dài…) |
 
 → `ExceptionHandlingMiddleware` bắt theo thứ tự này. Controller không cần `try/catch` hay tự trả 404
 cho entity liên quan — service ném, middleware lo phần còn lại.
+
+**Validation đầu vào chạy TỰ ĐỘNG (không inject vào controller):** `FluentValidationActionFilter`
+(action filter, `API/Filters/`) chạy trước mọi action — nó duyệt tham số của action, hỏi DI
+`IValidator<kiểu>`, có thì validate, lỗi → ném `ValidationException` (đi vào bảng trên → 400). Nhờ vậy
+controller **không còn** inject `IValidator<>` hay gọi `ValidateAndThrowAsync`. Tham số nguyên thủy
+(`Guid`, `int`, `CancellationToken`) không có validator nên tự bỏ qua. Đây là cách "đúng chuẩn": validate
+*hình dạng* request là concern cắt ngang → gom về một filter, không lặp trong từng action.
 
 ## 9. Domain Service — API gọi behavior, không gọi repository
 

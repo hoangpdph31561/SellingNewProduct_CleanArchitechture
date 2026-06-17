@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,17 +13,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class PaymentsController : ControllerBase
 {
     private readonly IPaymentService myPaymentService;
-    private readonly IPaymentQueries myPaymentQueries;
-    private readonly IValidator<CreatePaymentRequest> myCreateValidator;
 
-    public PaymentsController(
-        IPaymentService thePaymentService,
-        IPaymentQueries thePaymentQueries,
-        IValidator<CreatePaymentRequest> theCreateValidator)
+    public PaymentsController(IPaymentService thePaymentService)
     {
         myPaymentService = thePaymentService;
-        myPaymentQueries = thePaymentQueries;
-        myCreateValidator = theCreateValidator;
     }
 
     [HttpGet("{theId:guid}")]
@@ -44,7 +36,7 @@ public sealed class PaymentsController : ControllerBase
         [FromQuery] PaymentSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myPaymentQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myPaymentService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -58,15 +50,13 @@ public sealed class PaymentsController : ControllerBase
         [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myPaymentQueries.GetOutstandingOrdersAsync(thePage, thePageSize, theCancellationToken);
+        var aResult = await myPaymentService.GetOutstandingOrdersAsync(thePage, thePageSize, theCancellationToken);
         return Ok(aResult);
     }
 
     [HttpPost]
     public async Task<ActionResult<PaymentResponse>> Create(CreatePaymentRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
         var aPayment = await myPaymentService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aPayment.Id }, aPayment.ToResponse());

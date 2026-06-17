@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
-using SellingNewProduct.Infrastructure.MongoDB.Queries;
 using SellingNewProduct.Infrastructure.MongoDB.Repositories;
 
 namespace SellingNewProduct.Infrastructure.MongoDB;
@@ -32,14 +31,8 @@ public static class DependencyInjection
         theServices.AddScoped<IOrderRepository, MongoOrderRepository>();
         theServices.AddScoped<IPaymentRepository, MongoPaymentRepository>();
 
-        // Read side (CQRS-lite): Mongo cannot JOIN, so it stitches in memory.
-        theServices.AddScoped<IProductQueries, MongoProductQueries>();
-        theServices.AddScoped<IOrderQueries, MongoOrderQueries>();
-        theServices.AddScoped<IReportQueries, MongoReportQueries>();
-        theServices.AddScoped<ICustomerQueries, MongoCustomerQueries>();
-        theServices.AddScoped<IEmployeeQueries, MongoEmployeeQueries>();
-        theServices.AddScoped<ICategoryQueries, MongoCategoryQueries>();
-        theServices.AddScoped<IPaymentQueries, MongoPaymentQueries>();
+        // Read side: reporting repository that spans many aggregates (no single aggregate owns it).
+        theServices.AddScoped<IReportRepository, MongoReportRepository>();
 
         return theServices;
     }

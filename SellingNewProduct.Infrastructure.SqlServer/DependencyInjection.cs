@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
-using SellingNewProduct.Infrastructure.SqlServer.Queries;
 using SellingNewProduct.Infrastructure.SqlServer.Repositories;
 
 namespace SellingNewProduct.Infrastructure.SqlServer;
@@ -30,14 +29,8 @@ public static class DependencyInjection
         theServices.AddScoped<IOrderRepository, SqlServerOrderRepository>();
         theServices.AddScoped<IPaymentRepository, SqlServerPaymentRepository>();
 
-        // Read side (CQRS-lite): JOIN/reporting queries, separate from the write repositories.
-        theServices.AddScoped<IProductQueries, SqlServerProductQueries>();
-        theServices.AddScoped<IOrderQueries, SqlServerOrderQueries>();
-        theServices.AddScoped<IReportQueries, SqlServerReportQueries>();
-        theServices.AddScoped<ICustomerQueries, SqlServerCustomerQueries>();
-        theServices.AddScoped<IEmployeeQueries, SqlServerEmployeeQueries>();
-        theServices.AddScoped<ICategoryQueries, SqlServerCategoryQueries>();
-        theServices.AddScoped<IPaymentQueries, SqlServerPaymentQueries>();
+        // Read side: reporting repository that spans many aggregates (no single aggregate owns it).
+        theServices.AddScoped<IReportRepository, SqlServerReportRepository>();
 
         return theServices;
     }

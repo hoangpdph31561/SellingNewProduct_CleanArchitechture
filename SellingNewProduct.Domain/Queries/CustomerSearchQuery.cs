@@ -3,7 +3,7 @@ using SellingNewProduct.Domain.Common;
 namespace SellingNewProduct.Domain.Queries;
 
 /// <summary>
-/// Input for <c>ICustomerQueries.SearchAsync</c>: all customer-list filters plus paging and
+/// Input for <c>ICustomerService.SearchAsync</c>: all customer-list filters plus paging and
 /// sorting. All filters are optional (null = no filter). <c>SortBy</c> accepts <c>name</c>
 /// (default), <c>email</c> or <c>city</c>.
 /// </summary>

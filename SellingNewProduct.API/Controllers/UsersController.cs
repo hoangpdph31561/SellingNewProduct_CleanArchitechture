@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -11,12 +10,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class UsersController : ControllerBase
 {
     private readonly IUserService myUserService;
-    private readonly IValidator<CreateUserRequest> myCreateValidator;
 
-    public UsersController(IUserService theUserService, IValidator<CreateUserRequest> theCreateValidator)
+    public UsersController(IUserService theUserService)
     {
         myUserService = theUserService;
-        myCreateValidator = theCreateValidator;
     }
 
     [HttpGet]
@@ -36,8 +33,6 @@ public sealed class UsersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<UserResponse>> Create(CreateUserRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
         var aUser = await myUserService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aUser.Id }, aUser.ToResponse());

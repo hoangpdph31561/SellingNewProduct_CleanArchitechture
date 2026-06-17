@@ -114,8 +114,10 @@ copy `UnitPrice`/`ProductName` thay vì tham chiếu `Product` hiện tại (ch�
 
 ## 6. Repository interfaces (Domain/Repositories)
 
-Mỗi aggregate root một repository. Vì **chưa làm CQRS**, các truy vấn báo cáo/đọc cũng đặt
-ngay trong repository (trả Domain entity hoặc kiểu kết quả đơn giản).
+Mỗi aggregate root một repository. Read side **đã gộp vào repository**: ngoài các method ghi (trả
+aggregate), repository còn có method đọc trả **read-model** (`*View`, `PagedResult<T>`) cho danh sách/
+báo cáo. Riêng báo cáo xuyên nhiều bảng có `IReportRepository` (không gắn aggregate). (Trước đây từng
+tách cổng `I*Queries` riêng — nay gộp lại để mỗi module một cổng `I*Service`→`I*Repository`.)
 
 ```csharp
 public interface IOrderRepository
@@ -130,8 +132,8 @@ public interface IOrderRepository
 (Tương tự: `IUserRepository`, `ICustomerRepository`, `IEmployeeRepository`,
 `ICategoryRepository`, `IProductRepository`, `IPaymentRepository`.)
 
-> `Order` luôn được nạp đầy đủ kèm `Details` (load cả cụm aggregate).
-> Khi nào báo cáo phức tạp/chậm, ta sẽ tách read-side (CQRS) sau — hiện giữ đơn giản.
+> `Order` luôn được nạp đầy đủ kèm `Details` (load cả cụm aggregate) cho phần ghi; phần đọc/báo cáo
+> dùng read-model phẳng (JOIN/GROUP BY) trả về trực tiếp, không nạp aggregate.
 
 ## 7. Mapping Domain ↔ Persistence (map tay ở Infrastructure)
 

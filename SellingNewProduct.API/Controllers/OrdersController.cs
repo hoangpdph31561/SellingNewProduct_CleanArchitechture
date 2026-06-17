@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,20 +13,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class OrdersController : ControllerBase
 {
     private readonly IOrderService myOrderService;
-    private readonly IOrderQueries myOrderQueries;
-    private readonly IValidator<CreateOrderRequest> myCreateValidator;
-    private readonly IValidator<AddOrderDetailRequest> myAddDetailValidator;
 
-    public OrdersController(
-        IOrderService theOrderService,
-        IOrderQueries theOrderQueries,
-        IValidator<CreateOrderRequest> theCreateValidator,
-        IValidator<AddOrderDetailRequest> theAddDetailValidator)
+    public OrdersController(IOrderService theOrderService)
     {
         myOrderService = theOrderService;
-        myOrderQueries = theOrderQueries;
-        myCreateValidator = theCreateValidator;
-        myAddDetailValidator = theAddDetailValidator;
     }
 
     [HttpGet("{theId:guid}")]
@@ -45,7 +34,7 @@ public sealed class OrdersController : ControllerBase
     [HttpGet("{theId:guid}/view")]
     public async Task<ActionResult<OrderDetailView>> GetView(Guid theId, CancellationToken theCancellationToken)
     {
-        var aView = await myOrderQueries.GetOrderDetailAsync(theId, theCancellationToken);
+        var aView = await myOrderService.GetOrderDetailAsync(theId, theCancellationToken);
         return aView is null ? NotFound() : Ok(aView);
     }
 
@@ -61,7 +50,7 @@ public sealed class OrdersController : ControllerBase
         [FromQuery] OrderSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myOrderQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myOrderService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -72,27 +61,21 @@ public sealed class OrdersController : ControllerBase
     [HttpGet("status-breakdown")]
     public async Task<ActionResult<IReadOnlyList<OrderStatusCountView>>> StatusBreakdown(CancellationToken theCancellationToken)
     {
-        var aResult = await myOrderQueries.GetStatusBreakdownAsync(theCancellationToken);
+        var aResult = await myOrderService.GetStatusBreakdownAsync(theCancellationToken);
         return Ok(aResult);
     }
 
+    /// <summary>
+    /// Places a complete order in ONE call — customer/employee, shipping address and all line
+    /// items together. The order is created as Draft (confirm it with the <c>/confirm</c> endpoint).
+    /// <c>POST /api/orders</c>
+    /// </summary>
     [HttpPost]
-    public async Task<ActionResult<OrderResponse>> Create(CreateOrderRequest theRequest, CancellationToken theCancellationToken)
+    public async Task<ActionResult<OrderResponse>> Place(PlaceOrderRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
-        var aOrder = await myOrderService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
+        var aOrder = await myOrderService.PlaceAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aOrder.Id }, aOrder.ToResponse());
-    }
-
-    [HttpPost("{theId:guid}/details")]
-    public async Task<ActionResult<OrderResponse>> AddDetail(Guid theId, AddOrderDetailRequest theRequest, CancellationToken theCancellationToken)
-    {
-        await myAddDetailValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
-        var aOrder = await myOrderService.AddDetailAsync(theId, theRequest.ProductId, theRequest.Quantity, theCancellationToken);
-        return Ok(aOrder.ToResponse());
     }
 
     [HttpPost("{theId:guid}/confirm")]

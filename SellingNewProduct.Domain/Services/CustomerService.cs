@@ -1,6 +1,9 @@
 using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Commands;
+using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Customers;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Domain.ValueObjects;
 
@@ -39,4 +42,13 @@ internal sealed class CustomerService : ICustomerService
 
     public Task DeleteAsync(Guid theId, CancellationToken theCancellationToken = default)
         => myCustomerRepository.DeleteAsync(theId, theCancellationToken);
+
+    public Task<CustomerSummaryView?> GetSummaryByIdAsync(Guid theCustomerId, CancellationToken theCancellationToken = default)
+        => myCustomerRepository.GetSummaryByIdAsync(theCustomerId, theCancellationToken);
+
+    public Task<PagedResult<CustomerSummaryView>> SearchAsync(CustomerSearchQuery theQuery, CancellationToken theCancellationToken = default)
+        => myCustomerRepository.SearchAsync(theQuery, theCancellationToken);
+
+    public Task<PagedResult<TopCustomerView>> GetTopCustomersAsync(int thePage = 1, int thePageSize = 10, CancellationToken theCancellationToken = default)
+        => myCustomerRepository.GetTopCustomersAsync(thePage, thePageSize, theCancellationToken);
 }

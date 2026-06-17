@@ -10,6 +10,9 @@ public sealed record CreateProductRequest(
     int StockQuantity,
     Guid CategoryId);
 
+/// <summary>Bulk create: several products in one request (maps to <c>IProductService.CreateManyAsync</c>).</summary>
+public sealed record BulkCreateProductsRequest(IReadOnlyList<CreateProductRequest> Items);
+
 public sealed record ProductResponse(
     Guid Id,
     string Name,

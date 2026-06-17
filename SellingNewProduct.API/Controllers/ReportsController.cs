@@ -6,19 +6,18 @@ using SellingNewProduct.Domain.ReadModels;
 namespace SellingNewProduct.API.Controllers;
 
 /// <summary>
-/// Reporting endpoints — all backed by the read side (<see cref="IReportQueries"/>):
-/// JOIN + GROUP BY across several tables to produce aggregate numbers, bypassing the
-/// domain aggregate.
+/// Reporting endpoints — all backed by <see cref="IReportService"/>: JOIN + GROUP BY across
+/// several tables to produce aggregate numbers, bypassing the domain aggregate.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ReportsController : ControllerBase
 {
-    private readonly IReportQueries myReportQueries;
+    private readonly IReportService myReportService;
 
-    public ReportsController(IReportQueries theReportQueries)
+    public ReportsController(IReportService theReportService)
     {
-        myReportQueries = theReportQueries;
+        myReportService = theReportService;
     }
 
     /// <summary>
@@ -31,7 +30,7 @@ public sealed class ReportsController : ControllerBase
         [FromQuery] int thePageSize = 10,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportQueries.GetBestSellingProductsAsync(thePage, thePageSize, theCancellationToken);
+        var aResult = await myReportService.GetBestSellingProductsAsync(thePage, thePageSize, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -39,7 +38,7 @@ public sealed class ReportsController : ControllerBase
     [HttpGet("employee-sales")]
     public async Task<ActionResult<IReadOnlyList<EmployeeSalesView>>> EmployeeSales(CancellationToken theCancellationToken)
     {
-        var aResult = await myReportQueries.GetEmployeeSalesLeaderboardAsync(theCancellationToken);
+        var aResult = await myReportService.GetEmployeeSalesLeaderboardAsync(theCancellationToken);
         return Ok(aResult);
     }
 
@@ -47,7 +46,7 @@ public sealed class ReportsController : ControllerBase
     [HttpGet("sales-by-category")]
     public async Task<ActionResult<IReadOnlyList<CategorySalesView>>> SalesByCategory(CancellationToken theCancellationToken)
     {
-        var aResult = await myReportQueries.GetSalesByCategoryAsync(theCancellationToken);
+        var aResult = await myReportService.GetSalesByCategoryAsync(theCancellationToken);
         return Ok(aResult);
     }
 
@@ -61,7 +60,7 @@ public sealed class ReportsController : ControllerBase
         [FromQuery] DateTime? theToUtc,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportQueries.GetDailySalesAsync(theFromUtc, theToUtc, theCancellationToken);
+        var aResult = await myReportService.GetDailySalesAsync(theFromUtc, theToUtc, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -76,7 +75,7 @@ public sealed class ReportsController : ControllerBase
         [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportQueries.GetLowStockProductsAsync(theThreshold, thePage, thePageSize, theCancellationToken);
+        var aResult = await myReportService.GetLowStockProductsAsync(theThreshold, thePage, thePageSize, theCancellationToken);
         return Ok(aResult);
     }
 }

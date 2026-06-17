@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,23 +13,14 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class CustomersController : ControllerBase
 {
     private readonly ICustomerService myCustomerService;
-    private readonly IOrderQueries myOrderQueries;
-    private readonly ICustomerQueries myCustomerQueries;
-    private readonly IValidator<CreateCustomerRequest> myCreateValidator;
-    private readonly IValidator<DeleteCustomerRequest> myDeleteValidator;
+    private readonly IOrderService myOrderService;
 
     public CustomersController(
         ICustomerService theCustomerService,
-        IOrderQueries theOrderQueries,
-        ICustomerQueries theCustomerQueries,
-        IValidator<CreateCustomerRequest> theCreateValidator,
-        IValidator<DeleteCustomerRequest> theDeleteValidator)
+        IOrderService theOrderService)
     {
         myCustomerService = theCustomerService;
-        myOrderQueries = theOrderQueries;
-        myCustomerQueries = theCustomerQueries;
-        myCreateValidator = theCreateValidator;
-        myDeleteValidator = theDeleteValidator;
+        myOrderService = theOrderService;
     }
 
     /// <summary>
@@ -43,7 +33,7 @@ public sealed class CustomersController : ControllerBase
         [FromQuery] CustomerSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myCustomerQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myCustomerService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -57,7 +47,7 @@ public sealed class CustomersController : ControllerBase
         [FromQuery] int thePageSize = 10,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myCustomerQueries.GetTopCustomersAsync(thePage, thePageSize, theCancellationToken);
+        var aResult = await myCustomerService.GetTopCustomersAsync(thePage, thePageSize, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -82,15 +72,13 @@ public sealed class CustomersController : ControllerBase
     [HttpGet("{theId:guid}/orders")]
     public async Task<ActionResult<CustomerOrderHistoryView>> GetOrderHistory(Guid theId, CancellationToken theCancellationToken)
     {
-        var aHistory = await myOrderQueries.GetCustomerHistoryAsync(theId, theCancellationToken);
+        var aHistory = await myOrderService.GetCustomerHistoryAsync(theId, theCancellationToken);
         return aHistory is null ? NotFound() : Ok(aHistory);
     }
 
     [HttpPost]
     public async Task<ActionResult<CustomerResponse>> Create(CreateCustomerRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
         var aCustomer = await myCustomerService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aCustomer.Id }, aCustomer.ToResponse());
@@ -99,7 +87,6 @@ public sealed class CustomersController : ControllerBase
     [HttpDelete]
     public async Task<ActionResult> Delete(DeleteCustomerRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myDeleteValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
         await myCustomerService.DeleteAsync(theRequest.Id, theCancellationToken);
         return NoContent();
     }

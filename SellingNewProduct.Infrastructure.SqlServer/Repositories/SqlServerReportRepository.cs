@@ -1,22 +1,22 @@
 using Microsoft.EntityFrameworkCore;
 using SellingNewProduct.Domain.Common;
-using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Orders;
+using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 
-namespace SellingNewProduct.Infrastructure.SqlServer.Queries;
+namespace SellingNewProduct.Infrastructure.SqlServer.Repositories;
 
 /// <summary>
 /// SQL Server reporting: JOIN several tables + GROUP BY, aggregated on the database.
 /// This is where JOIN pays off the most — the aggregation is pushed down to the
 /// database instead of pulling thousands of rows into the app to sum them.
 /// </summary>
-internal sealed class SqlServerReportQueries : IReportQueries
+internal sealed class SqlServerReportRepository : IReportRepository
 {
     private readonly AppDbContext myAppDbContext;
 
-    public SqlServerReportQueries(AppDbContext theAppDbContext)
+    public SqlServerReportRepository(AppDbContext theAppDbContext)
     {
         myAppDbContext = theAppDbContext;
     }

@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,17 +13,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class EmployeesController : ControllerBase
 {
     private readonly IEmployeeService myEmployeeService;
-    private readonly IEmployeeQueries myEmployeeQueries;
-    private readonly IValidator<CreateEmployeeRequest> myCreateValidator;
 
-    public EmployeesController(
-        IEmployeeService theEmployeeService,
-        IEmployeeQueries theEmployeeQueries,
-        IValidator<CreateEmployeeRequest> theCreateValidator)
+    public EmployeesController(IEmployeeService theEmployeeService)
     {
         myEmployeeService = theEmployeeService;
-        myEmployeeQueries = theEmployeeQueries;
-        myCreateValidator = theCreateValidator;
     }
 
     [HttpGet]
@@ -44,7 +36,7 @@ public sealed class EmployeesController : ControllerBase
         [FromQuery] EmployeeSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myEmployeeQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myEmployeeService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -58,8 +50,6 @@ public sealed class EmployeesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<EmployeeResponse>> Create(CreateEmployeeRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
         var aEmployee = await myEmployeeService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aEmployee.Id }, aEmployee.ToResponse());

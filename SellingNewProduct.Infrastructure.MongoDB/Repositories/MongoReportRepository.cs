@@ -1,26 +1,26 @@
 using Microsoft.EntityFrameworkCore;
 using SellingNewProduct.Domain.Common;
-using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Orders;
+using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 
-namespace SellingNewProduct.Infrastructure.MongoDB.Queries;
+namespace SellingNewProduct.Infrastructure.MongoDB.Repositories;
 
 /// <summary>
 /// MongoDB reporting. Since there is no relational JOIN/GROUP BY, we load the
 /// related collections and aggregate them with LINQ-to-objects. For large data the
 /// more "Mongo-native" approach is an aggregation pipeline ($lookup, $group) or
 /// denormalised data — but the version below is clear enough for learning and keeps
-/// the same <see cref="IReportQueries"/> contract.
+/// the same <see cref="IReportRepository"/> contract.
 /// </summary>
-internal sealed class MongoReportQueries : IReportQueries
+internal sealed class MongoReportRepository : IReportRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
     private readonly MongoAppDbContext myMongoAppDbContext;
 
-    public MongoReportQueries(MongoAppDbContext theMongoAppDbContext)
+    public MongoReportRepository(MongoAppDbContext theMongoAppDbContext)
     {
         myMongoAppDbContext = theMongoAppDbContext;
     }

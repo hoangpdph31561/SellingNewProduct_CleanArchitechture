@@ -50,14 +50,15 @@ internal static class ApiMappings
     public static CreateEmployeeCommand ToCommand(this CreateEmployeeRequest theRequest) =>
         new(theRequest.FullName, theRequest.Position, theRequest.HireDate, theRequest.UserId);
 
-    public static CreateOrderCommand ToCommand(this CreateOrderRequest theRequest) =>
+    public static PlaceOrderCommand ToCommand(this PlaceOrderRequest theRequest) =>
         new(theRequest.CustomerId,
             theRequest.EmployeeId,
             theRequest.ShippingAddress.Street,
             theRequest.ShippingAddress.Ward,
             theRequest.ShippingAddress.District,
             theRequest.ShippingAddress.City,
-            theRequest.ShippingAddress.Country);
+            theRequest.ShippingAddress.Country,
+            theRequest.Items.Select(i => new OrderItemCommand(i.ProductId, i.Quantity)).ToList());
 
     public static CreatePaymentCommand ToCommand(this CreatePaymentRequest theRequest) =>
         new(theRequest.OrderId, theRequest.Amount, theRequest.Currency, theRequest.Method);

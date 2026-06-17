@@ -57,9 +57,13 @@ Namespace trùng cấu trúc thư mục.
 - **Tổ chức folder Domain theo LOẠI**: `Abstractions/` (mọi interface service + query + IPasswordHasher),
   `Services/` (impl), `Repositories/` (I*Repository), `ReadModels/`; folder theo aggregate (Orders/,
   Products/…) chỉ chứa entity/enum/event. (KHÔNG nhét service/interface vào folder aggregate.)
-- **Read side trong Domain**: interface query (`I*Queries` ở `Domain/Abstractions`) + read-model
-  (`*View` ở `Domain/ReadModels`) + `PagedResult<T>`/`PageRequest` (ở `Domain/Common`). Infra implement.
-- Service ném `DomainException` (vi phạm rule → 400) hoặc `NotFoundException` (entity liên quan thiếu → 404).
+- **Read side gộp vào Service + Repository**: KHÔNG còn cổng `I*Queries`. Method đọc (Search/Summary/
+  history…) nằm trên `I*Service` rồi delegate xuống `I*Repository` — và **repository được trả read-model**
+  (`*View`, `PagedResult<T>`). Input đọc gói trong record `*SearchQuery` (`Domain/Queries`); read-model
+  `*View` ở `Domain/ReadModels`; `PagedResult<T>`/`PageRequest` ở `Domain/Common`. Báo cáo không có aggregate
+  → `IReportService` + `IReportRepository` riêng.
+- Service ném `DomainException` (vi phạm invariant → 400), `ConflictException` (trùng/đụng trạng thái/không
+  đủ tồn kho → 409) hoặc `NotFoundException` (entity liên quan thiếu → 404).
 - Domain **cấm** reference: EF Core, MongoDB, AutoMapper, System.Text.Json attribute, ASP.NET.
   (Được phép: `Microsoft.Extensions.DependencyInjection.Abstractions` — chỉ là contract DI, không hạ tầng.)
 
@@ -73,7 +77,7 @@ Namespace trùng cấu trúc thư mục.
 ## 6. Validation theo TẦNG (mỗi tầng tự lo phần của mình)
 | Tầng | Validate gì | Cách |
 |------|-------------|------|
-| API | Format request (required, length, range, email dạng đúng) | FluentValidation → 400 |
+| API | Format request (required, length, range, email dạng đúng) | FluentValidation, chạy TỰ ĐỘNG qua `FluentValidationActionFilter` → 400 |
 | Domain | Quy tắc nghiệp vụ (invariant) | factory/method ném `DomainException` |
 | Infrastructure | Ràng buộc lưu trữ (unique, NOT NULL, index) | EF config + schema DB |
 
@@ -94,10 +98,12 @@ Namespace trùng cấu trúc thư mục.
 - Xóa mềm: Global Query Filter `HasQueryFilter(e => e.Status != EntityStatus.Deleted)`.
 
 ## 8. Quy ước API
-- Controller mỏng: validate format request (FluentValidation) → gọi **Domain Service** (`I*Service`)
-  hoặc **read query** (`I*Queries`) → map sang DTO trả về. KHÔNG inject repository, KHÔNG chứa business.
+- Controller mỏng: chỉ inject **Domain Service** (`I*Service`) → gọi service → map sang DTO trả về.
+  KHÔNG inject repository, KHÔNG inject validator, KHÔNG chứa business.
+- Validate format request chạy **tự động** qua `FluentValidationActionFilter` (đăng ký trong
+  `AddApiServices`, trước `ApiResponseWrapperFilter`) — controller không gọi `ValidateAndThrowAsync`.
 - DTO: `*Request` (vào), `*Response` (ra). Không trả Domain entity ra ngoài.
-- Lỗi → middleware đổi `DomainException` → 400, `NotFoundException` → 404, `ValidationException` → 400.
+- Lỗi → middleware đổi `DomainException`/`ValidationException` → 400, `ConflictException` → 409, `NotFoundException` → 404.
 
 ## 9. Packages dự kiến
 | Project | Package |
@@ -105,10 +111,10 @@ Namespace trùng cấu trúc thư mục.
 | Domain | `Microsoft.Extensions.DependencyInjection.Abstractions` (chỉ để có `AddDomainServices`) |
 | Infrastructure.SqlServer | `Microsoft.EntityFrameworkCore.SqlServer`, `Microsoft.EntityFrameworkCore.Design` |
 | Infrastructure.MongoDB | `MongoDB.EntityFrameworkCore` |
-| API | `FluentValidation.AspNetCore`, OpenAPI/Swagger, ref Domain + 2 Infra |
+| API | `FluentValidation` + `FluentValidation.DependencyInjectionExtensions`, OpenAPI/Swagger, ref Domain + 2 Infra |
 
 > Chỉ **3 tầng**: API · Domain · Infrastructure (SqlServer/MongoDB). Không có tầng Application —
-> read side (queries + read-model) đã gộp vào Domain.
+> read side (read-model + method đọc) đã gộp vào Domain Service + Repository.
 
 > KHÔNG dùng AutoMapper (đã chốt map tay).
 
@@ -118,9 +124,10 @@ Domain/
   Common/        (BaseEntity, AggregateRoot, ValueObject, EntityStatus, DomainException,
                   NotFoundException, IDomainEvent, PagedResult/PageRequest)
   ValueObjects/  (Money, Email, Address, Sku)
-  Abstractions/  (I*Service x7, I*Queries x3, IPasswordHasher)   -> interface tầng ngoài phụ thuộc
-  Services/      (CategoryService ... UserService)               -> impl behavior (internal)
-  Repositories/  (IUserRepository, ICustomerRepository, ... IOrderRepository)
+  Abstractions/  (I*Service x7 + IReportService, IPasswordHasher)  -> interface tầng ngoài phụ thuộc
+  Services/      (CategoryService ... UserService, ReportService)  -> impl behavior (internal)
+  Queries/       (*SearchQuery record input cho SearchAsync)
+  Repositories/  (IUserRepository ... IOrderRepository, IReportRepository)  -> có cả method đọc (trả *View)
   ReadModels/    (ProductViews, OrderViews, ReportViews)         -> *View (read-model)
   Users/         (User.cs, UserRole.cs)   <- folder aggregate: CHỈ entity/enum/event
   Customers/     (Customer.cs)
@@ -135,16 +142,14 @@ Infrastructure.SqlServer/
   Persistence/   (AppDbContext.cs)
   Models/        (BaseRecord.cs, OrderRecord.cs, ...)  -> *Record
   Configurations/(OrderConfiguration.cs : IEntityTypeConfiguration)
-  Repositories/  (SqlServerOrderRepository.cs, ...)
-  Queries/       (SqlServerOrderQueries.cs, ...)  -> implement read side (JOIN)
+  Repositories/  (SqlServerOrderRepository.cs ... SqlServerReportRepository.cs)  -> ghi + đọc (JOIN). KHÔNG còn folder Queries/
   Mapping/       (OrderMapper.cs)              -> map tay
   DependencyInjection.cs
 
 Infrastructure.MongoDB/
   Persistence/   (MongoAppDbContext.cs)
   Models/        (BaseDocument.cs, OrderDocument.cs, ...)  -> *Document
-  Repositories/  (MongoOrderRepository.cs, ...)
-  Queries/       (MongoOrderQueries.cs, ...)   -> implement read side (stitch)
+  Repositories/  (MongoOrderRepository.cs ... MongoReportRepository.cs)  -> ghi + đọc (stitch). KHÔNG còn folder Queries/
   Mapping/       (OrderMapper.cs)
   DependencyInjection.cs
 

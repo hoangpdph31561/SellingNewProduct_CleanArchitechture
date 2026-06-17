@@ -1,8 +1,12 @@
 namespace SellingNewProduct.API.Contracts;
 
-public sealed record CreateOrderRequest(Guid CustomerId, Guid EmployeeId, AddressDto ShippingAddress);
+public sealed record PlaceOrderRequest(
+    Guid CustomerId,
+    Guid EmployeeId,
+    AddressDto ShippingAddress,
+    IReadOnlyList<OrderItemRequest> Items);
 
-public sealed record AddOrderDetailRequest(Guid ProductId, int Quantity);
+public sealed record OrderItemRequest(Guid ProductId, int Quantity);
 
 public sealed record OrderDetailResponse(
     Guid Id,

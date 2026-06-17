@@ -3,13 +3,14 @@
 > **File này là NGUỒN SỰ THẬT để tiếp tục công việc.**
 > Mở chat mới → bảo Claude đọc file này trước. Sau mỗi bước hoàn thành, tick `[x]`.
 
-Cập nhật lần cuối: 2026-06-16
-Trạng thái tổng thể: **Phase 1-5 + 7 XONG. Phase 9 (refactor 3 tầng + Domain Service) XONG. Toàn solution build pass (0 error). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test).**
+Cập nhật lần cuối: 2026-06-17
+Trạng thái tổng thể: **Phase 1-5 + 7 + 9 + 10 XONG. Toàn solution build pass (0 error, 0 warning). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test) + cân nhắc Unit of Work.**
 
-> ⚠️ **Cập nhật kiến trúc (2026-06-16) — xem Phase 9 cuối file:** Đã **bỏ project Application**, gộp read
-> side vào **Domain**. Đã thêm **Domain Service** (`I*Service`) cho cả 7 module — API gọi service, KHÔNG
-> gọi repository trực tiếp. Còn **3 tầng**: API · Domain · Infrastructure. Các mô tả "Application" / "5 project"
-> bên dưới (Phase 7) là LỊCH SỬ, không còn đúng hiện trạng.
+> ⚠️ **Cập nhật kiến trúc (2026-06-17) — xem Phase 10 cuối file:** Đã **bỏ HẲN cổng `I*Queries`**: read side
+> gộp vào `I*Service` + `I*Repository` (repository trả read-model); API mỗi module chỉ một cổng `I*Service`.
+> Thêm nghiệp vụ thật (trừ/hoàn kho, SKU duy nhất, luật thanh toán), `POST /api/orders` đặt cả đơn 1 call,
+> và **validation chạy tự động qua action filter** (controller không inject validator). Vẫn **3 tầng**:
+> API · Domain · Infrastructure. Mô tả "Application"/"5 project"/"`I*Queries`" ở Phase 7-9 là LỊCH SỬ.
 
 ---
 
@@ -165,8 +166,28 @@ dotnet run --project SellingNewProduct.API
 - **Đã chốt với user (giữ nguyên, KHÔNG đổi):** repository interface ở Domain (không xuống Infra — DIP);
   giữ ReadModels + IQueries (read side); aggregate tham chiếu nhau bằng Id, không ôm List aggregate khác.
 
+## Phase 10 — Gộp read side + nghiệp vụ + validation filter ✅ (2026-06-17)
+> Theo yêu cầu user: bỏ `I*Queries` dùng thẳng ở API; service phải có nghiệp vụ thật; validator không nên inject từng controller.
+- [x] **Bỏ HẲN cổng `I*Queries`** (7 cái) + `SqlServer*Queries`/`Mongo*Queries` + folder `Infrastructure/*/Queries`.
+      Method đọc dời vào `I*Service` → delegate `I*Repository`; **repository được trả read-model** (`*View`, `PagedResult`).
+      Read `GetByIdAsync` trùng tên method ghi → đổi `GetSummaryByIdAsync`. `Domain/Queries/*SearchQuery` (record input) GIỮ.
+- [x] **Reports** (không có aggregate) → tạo `IReportService` + `ReportService` + `IReportRepository` (+ impl Sql/Mongo).
+      Method đọc xuyên aggregate đặt theo chủ sở hữu dữ liệu (vd `GetCustomerHistoryAsync` ở `IOrderService`;
+      `CustomersController` inject thêm `IOrderService`).
+- [x] **Order gộp về 1 endpoint đặt hàng**: `POST /api/orders` = `PlaceAsync(PlaceOrderCommand)` tạo đơn kèm
+      toàn bộ item (Draft). Bỏ endpoint `POST /orders/{id}/details`. Confirm/Ship/Cancel vẫn riêng.
+- [x] **Nghiệp vụ thật trong Service**: trừ kho khi `Confirm` + hoàn kho khi `Cancel` (`UpdateRangeAsync`);
+      check Active + đủ tồn khi đặt; **SKU duy nhất** (`ProductService`); Payment chỉ trả đơn Confirmed/Shipped,
+      đúng tiền tệ, không vượt số còn nợ. Tất cả vi phạm → `ConflictException` (409).
+- [x] **Batch repository**: `IProductRepository` thêm `GetByIdsAsync`, `ExistsBySkuAsync`, `AddRangeAsync`,
+      `UpdateRangeAsync` (impl Sql + Mongo); `POST /api/products/bulk` = `CreateManyAsync`.
+- [x] **Validation tự động**: `FluentValidationActionFilter` (action filter) validate request DTO trước mọi action;
+      **7 controller bỏ hết** inject `IValidator<>` + `ValidateAndThrowAsync`. Đăng ký trong `AddApiServices` trước `ApiResponseWrapperFilter`.
+- [x] `dotnet build` PASS (0 error, 0 warning). Docs cập nhật (ARCHITECTURE, CONVENTIONS, DOMAIN_MODEL, code/01,04,05,06, README index).
+- **Ghi chú còn yếu:** Confirm/Cancel ghi 2 repo (Product + Order) = 2 SaveChanges → nên gói 1 transaction/UoW (xem câu hỏi mở).
+
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
-- [ ] Có cần Unit of Work / transaction rõ ràng không? (mặc định: SaveChanges per repo)
+- [ ] Có cần Unit of Work / transaction rõ ràng không? (mặc định: SaveChanges per repo) — **đã thành cấp thiết** sau Phase 10 (Confirm/Cancel đụng 2 repo).
 - [ ] Seed dữ liệu mẫu để demo nhanh? (đề xuất: có)
 - [ ] `Payment` là aggregate riêng hay con của `Order`? (mặc định: aggregate riêng, ref OrderId)
 - [ ] Có làm authentication thật cho `User` không, hay chỉ lưu bảng? (mặc định: chỉ lưu bảng, chưa auth)

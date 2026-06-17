@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,17 +13,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class ProductsController : ControllerBase
 {
     private readonly IProductService myProductService;
-    private readonly IProductQueries myProductQueries;
-    private readonly IValidator<CreateProductRequest> myCreateValidator;
 
-    public ProductsController(
-        IProductService theProductService,
-        IProductQueries theProductQueries,
-        IValidator<CreateProductRequest> theCreateValidator)
+    public ProductsController(IProductService theProductService)
     {
         myProductService = theProductService;
-        myProductQueries = theProductQueries;
-        myCreateValidator = theCreateValidator;
     }
 
     [HttpGet]
@@ -45,7 +37,7 @@ public sealed class ProductsController : ControllerBase
         [FromQuery] ProductSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myProductQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myProductService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -63,17 +55,28 @@ public sealed class ProductsController : ControllerBase
     [HttpGet("{theId:guid}/summary")]
     public async Task<ActionResult<ProductSummaryView>> GetSummary(Guid theId, CancellationToken theCancellationToken)
     {
-        var aView = await myProductQueries.GetByIdAsync(theId, theCancellationToken);
+        var aView = await myProductService.GetSummaryByIdAsync(theId, theCancellationToken);
         return aView is null ? NotFound() : Ok(aView);
     }
 
     [HttpPost]
     public async Task<ActionResult<ProductResponse>> Create(CreateProductRequest theRequest, CancellationToken theCancellationToken)
     {
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
         var aProduct = await myProductService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aProduct.Id }, aProduct.ToResponse());
+    }
+
+    /// <summary>
+    /// Create several products in one request (bulk import). The unique-SKU rule is enforced both
+    /// within the batch and against the store. <c>POST /api/products/bulk</c>
+    /// </summary>
+    [HttpPost("bulk")]
+    public async Task<ActionResult<IReadOnlyList<ProductResponse>>> CreateMany(BulkCreateProductsRequest theRequest, CancellationToken theCancellationToken)
+    {
+        var aCommands = theRequest.Items.Select(i => i.ToCommand()).ToList();
+        var aProducts = await myProductService.CreateManyAsync(aCommands, theCancellationToken);
+
+        return Ok(aProducts.Select(p => p.ToResponse()).ToList());
     }
 }

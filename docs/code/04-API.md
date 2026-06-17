@@ -24,27 +24,35 @@ DTO là object "biên giới" giữa thế giới HTTP và Domain. Dùng `record
 
 ---
 
-## B. Validator — `Validators/RequestValidators.cs`
+## B. Validator — `Validators/RequestValidators.cs` (chạy TỰ ĐỘNG qua filter)
 Dùng **FluentValidation**. Mỗi request có một class `: AbstractValidator<TRequest>`.
 - 💡 Chỉ kiểm **format/shape**: bắt buộc, độ dài, khoảng giá trị, email đúng dạng. **KHÔNG** kiểm
   business (vd "đủ tồn kho không") — việc đó là của Domain.
 - Vd `CreateProductRequestValidator`: `Name` không rỗng, `Price > 0`, `Currency` đúng 3 ký tự...
-- `AddressDtoValidator` được tái dùng qua `SetValidator(...)` trong các request có địa chỉ.
+- `AddressDtoValidator` được tái dùng qua `SetValidator(...)`; `PlaceOrderRequestValidator` dùng
+  `RuleForEach(x => x.Items)` để validate từng dòng đặt hàng; `BulkCreateProductsRequestValidator`
+  tương tự cho tạo nhiều sản phẩm.
 
-💡 Validator chặn **rác đầu vào sớm** (ném `ValidationException` → 400 trước khi đụng Domain); Domain mới
-là nơi giữ **luật nghiệp vụ thật**.
+💡 **Controller KHÔNG inject validator, KHÔNG gọi `ValidateAndThrowAsync`.** Thay vào đó một action
+filter — `FluentValidationActionFilter` (`Filters/`) — chạy **trước mọi action**: nó duyệt từng tham số,
+hỏi DI `IValidator<kiểu_tham_số>`, có thì validate; lỗi → ném `ValidationException` → middleware đổi 400.
+Tham số nguyên thuỷ (`Guid`, `int`, `CancellationToken`) không có validator nên tự bỏ qua. Validate hình
+dạng request là **concern cắt ngang** → gom về 1 filter thay vì lặp ở từng action. Validators vẫn auto
+đăng ký qua `AddValidatorsFromAssemblyContaining<PlaceOrderRequestValidator>()`; filter chỉ *tìm và gọi* chúng.
 
 ---
 
 ## C. Input objects — Command & Query (ở Domain)
 Port của Domain **không** nhận danh sách tham số dài; chúng nhận **một object**:
-- **Command** (`Domain/Commands/Create*Command`) — input cho `I*Service.CreateAsync`.
-- **Query** (`Domain/Queries/*SearchQuery`) — input cho `I*Queries.SearchAsync` (filter + paging + sort).
+- **Command** (`Domain/Commands/*Command`) — input cho method ghi của `I*Service` (vd `Create*Command`,
+  `PlaceOrderCommand` gồm cả danh sách `OrderItemCommand`).
+- **Query** (`Domain/Queries/*SearchQuery`) — input cho `I*Service.SearchAsync` (filter + paging + sort).
 
 Controller dịch DTO của HTTP sang các object này:
-- **Write**: `theRequest.ToCommand()` (map tay, xem mục D) rồi `service.CreateAsync(command, ct)`.
+- **Write**: `theRequest.ToCommand()` (map tay, xem mục D) rồi `service.CreateAsync(command, ct)` /
+  `service.PlaceAsync(command, ct)`.
 - **Read**: bind thẳng `[FromQuery] XxxSearchQuery theQuery` — ASP.NET tự nhồi từ query-string theo **tên
-  property** (PascalCase), vd `?Name=ao&Page=2&SortBy=price`.
+  property** (PascalCase), vd `?Name=ao&Page=2&SortBy=price` — rồi `service.SearchAsync(query, ct)`.
 
 💡 Lợi: thêm filter mới chỉ sửa record, **không đổi chữ ký** port; an toàn compile-time; không cần AutoMapper.
 
@@ -152,46 +160,49 @@ Hàm `Hash(thePassword)` băm SHA256 → base64. Implement interface `IPasswordH
 ---
 
 ## G. Controllers — `Controllers/*Controller.cs`
-`[ApiController]`, route `api/[controller]`. Inject **Domain Service** (`I*Service`) + (nếu có endpoint đọc)
-**read query** (`I*Queries`) + validator qua constructor. Mỏng và theo một khuôn:
+`[ApiController]`, route `api/[controller]`. Inject **DUY NHẤT** `I*Service` (một module có thể inject thêm
+service của module khác khi cần dữ liệu xuyên aggregate). **Không** inject validator (filter lo), **không**
+inject repository. Mỏng và theo một khuôn:
 
 ```csharp
 [HttpPost]
 public async Task<ActionResult<XResponse>> Create(CreateXRequest theRequest, CancellationToken ct)
 {
-    await myCreateValidator.ValidateAndThrowAsync(theRequest, ct);          // 1) format sai → ném → 400
-    var aEntity = await myXService.CreateAsync(theRequest.ToCommand(), ct); // 2) Domain lo business + lưu
-    return CreatedAtAction(nameof(GetById), new { theId = aEntity.Id }, aEntity.ToResponse()); // 3) filter bọc → 201 + envelope
+    // Format đã được FluentValidationActionFilter kiểm TRƯỚC khi vào đây (sai → 400).
+    var aEntity = await myXService.CreateAsync(theRequest.ToCommand(), ct);  // Domain lo business + lưu
+    return CreatedAtAction(nameof(GetById), new { theId = aEntity.Id }, aEntity.ToResponse()); // filter bọc → 201 + envelope
 }
 
 [HttpGet("search")]
 public async Task<ActionResult<PagedResult<XSummaryView>>> Search([FromQuery] XSearchQuery theQuery, CancellationToken ct)
-    => Ok(await myXQueries.SearchAsync(theQuery, ct));                      // read side, filter bọc → 200 + envelope
+    => Ok(await myXService.SearchAsync(theQuery, ct));                       // read side cùng cổng I*Service
 ```
 
-💡 Controller **không** còn `X.Create(...)`, `repository.AddAsync(...)`, cũng **không** dựng `ApiResponse`. Mọi
-logic ghi (gồm kiểm tồn tại bản ghi liên quan → ném `NotFoundException` → 404; trùng → `ConflictException` → 409)
-nằm trong Domain Service.
+💡 Controller **không** còn `X.Create(...)`, `repository.AddAsync(...)`, `ValidateAndThrowAsync(...)`, cũng
+**không** dựng `ApiResponse`. Mọi logic ghi/đọc nghiệp vụ (kiểm tồn tại → `NotFoundException` 404; trùng/đụng
+trạng thái/không đủ tồn kho → `ConflictException` 409) nằm trong Domain Service.
 
 Theo từng controller:
-- **`CategoriesController`** — đọc trước. `CategoryService.CreateAsync` check trùng tên → **`ConflictException` (409)**.
-  Endpoint đọc: `summaries`, `search` (`ICategoryQueries`).
-- **`ProductsController`** — `ProductService` kiểm `CategoryId` tồn tại. `search` + `{id}/summary` dùng `IProductQueries`.
+- **`CategoriesController`** — `CategoryService.CreateAsync` check trùng tên → **`ConflictException` (409)**.
+  Đọc qua chính `ICategoryService`: `summaries`, `search`.
+- **`ProductsController`** — `ProductService` kiểm `CategoryId` tồn tại + **SKU không trùng** (`ConflictException`).
+  `bulk` tạo nhiều sản phẩm 1 lần (AddRange). `search` + `{id}/summary` qua `IProductService`.
 - **`UsersController`** — `UserService` băm mật khẩu qua `IPasswordHasher` rồi `User.Create`.
-- **`EmployeesController`** — `EmployeeService` kiểm `UserId` tồn tại. `search` dùng `IEmployeeQueries` (kèm số đơn đã bán).
-- **`CustomersController`** — `CustomerService.CreateAsync` dựng `Address`/`Email`; `search`, `top` (`ICustomerQueries`),
-  `{id}/orders` (`IOrderQueries`).
+- **`EmployeesController`** — `EmployeeService` kiểm `UserId` tồn tại. `search` (kèm số đơn đã bán) qua `IEmployeeService`.
+- **`CustomersController`** — `CustomerService.CreateAsync` dựng `Address`/`Email`; `search`, `top` qua `ICustomerService`;
+  `{id}/orders` (lịch sử đơn — dữ liệu Order) inject thêm **`IOrderService`** → `GetCustomerHistoryAsync`.
 - **`OrdersController`** (quan trọng) — `OrderService` gói luồng nhiều bước:
-  - `Create` — kiểm customer + employee tồn tại, tạo đơn `Draft`.
-  - `AddDetail` — nạp Order + Product, gọi `AddDetail` (Domain giữ luật: chỉ thêm khi Draft, snapshot giá), lưu.
-  - `Confirm` / `Ship` / `Cancel` — nạp Order, gọi method Domain, lưu. 💡 Đơn không tồn tại → `NotFoundException`
-    (404); sai trạng thái → `DomainException` (400).
-  - Đọc: `{id}/view`, danh sách (`Search`), `status-breakdown` (`IOrderQueries`).
-- **`PaymentsController`** — `PaymentService`: `Create` (kiểm order tồn tại), `Complete`. Đọc: `search`, `outstanding-orders`.
-- **`ReportsController`** — chỉ đọc: `IReportQueries` (best-selling, employee-sales, sales-by-category, daily-sales, low-stock).
+  - `Place` (`POST /api/orders`) — nhận **cả đơn + toàn bộ item** trong 1 call: kiểm customer/employee tồn tại,
+    mỗi product Active + đủ tồn kho, tạo đơn `Draft` kèm các dòng. (KHÔNG còn endpoint `AddDetail` riêng.)
+  - `Confirm` — **trừ kho** từng dòng (re-check tồn) rồi chuyển `Confirmed`. `Cancel` — **hoàn kho** nếu đơn
+    đang `Confirmed`. `Ship`. 💡 Đơn không tồn tại → 404; sai trạng thái → `DomainException` 400; thiếu tồn → 409.
+  - Đọc: `{id}/view`, danh sách (`Search`), `status-breakdown` qua `IOrderService`.
+- **`PaymentsController`** — `PaymentService.Create`: order phải `Confirmed/Shipped`, đúng tiền tệ, không trả
+  vượt số còn nợ (đều `ConflictException`). `Complete`. Đọc: `search`, `outstanding-orders`.
+- **`ReportsController`** — chỉ đọc qua **`IReportService`** (best-selling, employee-sales, sales-by-category,
+  daily-sales, low-stock). Reports không có aggregate nên có service+repository riêng.
 
-💡 Controller **không bao giờ** đụng `DbContext`, repository, hay biết SQL/Mongo. Nó chỉ nói chuyện với Domain
-Service và read query.
+💡 Controller **không bao giờ** đụng `DbContext`, repository, hay biết SQL/Mongo. Nó chỉ nói chuyện với `I*Service`.
 
 ---
 
@@ -211,7 +222,7 @@ Mỗi tầng có **một** extension đăng ký dịch vụ của riêng nó (đ
 
 | Tầng | Extension |
 |---|---|
-| API | `AddApiServices()` — controllers + `ApiResponseWrapperFilter`, OpenAPI + transformer, validators, `IPasswordHasher` |
+| API | `AddApiServices()` — controllers + `FluentValidationActionFilter` (validate tự động) + `ApiResponseWrapperFilter`, OpenAPI + transformer, validators, `IPasswordHasher` |
 | Domain | `AddDomainServices()` |
 | Infra SqlServer | `AddSqlServerInfrastructure(config)` |
 | Infra MongoDB | `AddMongoInfrastructure(config)` |

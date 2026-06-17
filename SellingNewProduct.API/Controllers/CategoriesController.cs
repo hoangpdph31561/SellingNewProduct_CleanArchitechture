@@ -1,4 +1,3 @@
-using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
@@ -14,17 +13,10 @@ namespace SellingNewProduct.API.Controllers;
 public sealed class CategoriesController : ControllerBase
 {
     private readonly ICategoryService myCategoryService;
-    private readonly ICategoryQueries myCategoryQueries;
-    private readonly IValidator<CreateCategoryRequest> myCreateValidator;
 
-    public CategoriesController(
-        ICategoryService theCategoryService,
-        ICategoryQueries theCategoryQueries,
-        IValidator<CreateCategoryRequest> theCreateValidator)
+    public CategoriesController(ICategoryService theCategoryService)
     {
         myCategoryService = theCategoryService;
-        myCategoryQueries = theCategoryQueries;
-        myCreateValidator = theCreateValidator;
     }
 
     [HttpGet]
@@ -41,7 +33,7 @@ public sealed class CategoriesController : ControllerBase
     [HttpGet("summaries")]
     public async Task<ActionResult<IReadOnlyList<CategorySummaryView>>> Summaries(CancellationToken theCancellationToken)
     {
-        var aResult = await myCategoryQueries.GetCategorySummariesAsync(theCancellationToken);
+        var aResult = await myCategoryService.GetCategorySummariesAsync(theCancellationToken);
         return Ok(aResult);
     }
 
@@ -54,7 +46,7 @@ public sealed class CategoriesController : ControllerBase
         [FromQuery] CategorySearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myCategoryQueries.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await myCategoryService.SearchAsync(theQuery, theCancellationToken);
         return Ok(aResult);
     }
 
@@ -68,10 +60,8 @@ public sealed class CategoriesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<CategoryResponse>> Create(CreateCategoryRequest theRequest, CancellationToken theCancellationToken)
     {
-        // The API only validates the request SHAPE (Name != null, length...). The
-        // business rule (unique name) lives in CategoryService.
-        await myCreateValidator.ValidateAndThrowAsync(theRequest, theCancellationToken);
-
+        // Request SHAPE (Name != null, length...) is validated up front by FluentValidationActionFilter.
+        // The business rule (unique name) lives in CategoryService.
         var aCategory = await myCategoryService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { theId = aCategory.Id }, aCategory.ToResponse());

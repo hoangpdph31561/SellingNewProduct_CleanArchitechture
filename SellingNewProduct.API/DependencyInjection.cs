@@ -20,14 +20,20 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApiServices(this IServiceCollection theServices)
     {
-        // The result filter wraps every successful response into the standard ApiResponse envelope.
-        theServices.AddControllers(theOptions => theOptions.Filters.Add<ApiResponseWrapperFilter>());
+        // Filters run for every action: the validation filter validates request DTOs up front
+        // (no per-controller wiring), and the result filter wraps the success payload in ApiResponse.
+        theServices.AddControllers(theOptions =>
+        {
+            theOptions.Filters.Add<FluentValidationActionFilter>();
+            theOptions.Filters.Add<ApiResponseWrapperFilter>();
+        });
 
         // Make the OpenAPI document reflect the ApiResponse envelope the result filter adds at runtime.
         theServices.AddOpenApi(theOptions => theOptions.AddOperationTransformer<ApiResponseOperationTransformer>());
 
-        // API-level validators (request shape).
-        theServices.AddValidatorsFromAssemblyContaining<CreateOrderRequestValidator>();
+        // API-level validators (request shape). Discovered by the validation filter via DI; controllers
+        // no longer inject or call them.
+        theServices.AddValidatorsFromAssemblyContaining<PlaceOrderRequestValidator>();
 
         // Password hashing: API provides the implementation of the Domain contract.
         theServices.AddSingleton<IPasswordHasher, PasswordHasher>();

@@ -2,6 +2,8 @@ using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Categories;
 using SellingNewProduct.Domain.Commands;
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Domain.Queries;
+using SellingNewProduct.Domain.ReadModels;
 using SellingNewProduct.Domain.Repositories;
 
 namespace SellingNewProduct.Domain.Services;
@@ -40,4 +42,10 @@ internal sealed class CategoryService : ICategoryService
         await myCategoryRepository.AddAsync(aCategory, theCancellationToken);
         return aCategory;
     }
+
+    public Task<IReadOnlyList<CategorySummaryView>> GetCategorySummariesAsync(CancellationToken theCancellationToken = default)
+        => myCategoryRepository.GetCategorySummariesAsync(theCancellationToken);
+
+    public Task<PagedResult<CategorySummaryView>> SearchAsync(CategorySearchQuery theQuery, CancellationToken theCancellationToken = default)
+        => myCategoryRepository.SearchAsync(theQuery, theCancellationToken);
 }

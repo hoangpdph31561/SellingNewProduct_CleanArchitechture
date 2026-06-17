@@ -1,20 +1,25 @@
-# 05 — Read side (CQRS-lite) trong Domain
+# 05 — Read side (gộp vào Service + Repository)
 
-> ⚠️ **Cập nhật kiến trúc:** dự án đã gộp về **3 tầng** (API · Domain · Infrastructure) — KHÔNG còn
-> project `Application`. Toàn bộ read side đã chuyển vào **Domain**. Nơi đặt code hiện tại:
-> - **Query interface** (`I*Queries`) → `Domain/Abstractions/`
-> - **Query input object** (`*SearchQuery`) → `Domain/Queries/`
+> ⚠️ **Cập nhật kiến trúc (mới nhất):** read side **đã gộp vào `I*Service` + `I*Repository`** — KHÔNG
+> còn cổng `I*Queries` riêng. API chỉ dùng `I*Service`; service gọi `I*Repository`; **repository được
+> trả read-model**. (Trước đó từng tách cổng query riêng — CQRS-lite; nay gộp để mỗi module một cổng vào.)
+> Nơi đặt code hiện tại:
+> - **Method đọc** → nằm trên `I*Service` (`Domain/Abstractions/`) + `I*Repository` (`Domain/Repositories/`)
+> - **Query input object** (`*SearchQuery`) → `Domain/Queries/` (vẫn giữ — chỉ là DTO input)
 > - **Read-model output** (`*View`, `PagedResult`) → `Domain/ReadModels/`, `Domain/Common/`
-> - **Cách thực thi** → `Infrastructure.SqlServer|MongoDB/Queries/`
+> - **Cách thực thi** → nằm ngay trong `Infrastructure.*/Repositories/` (KHÔNG còn folder `Queries/`)
+> - **Báo cáo** (không có aggregate) → `IReportService` + `IReportRepository` riêng
 >
 > (Tên file vẫn là `05-Application.md` cho khỏi vỡ link; nội dung là "read side trong Domain".)
 
 Read side sinh ra để trả lời nhu cầu rất thực tế: **hiển thị dữ liệu ghép từ nhiều bảng** — ví dụ
 "đơn hàng này của khách *Nguyễn Văn A*, do nhân viên *Trần Thị B* bán", hay "khách này đã đặt 12 đơn,
-tổng 5.400.000đ". Repository (phía GHI) không hợp để làm việc này, nên ta tách **phía ĐỌC**.
+tổng 5.400.000đ". Aggregate (phía GHI) không hợp để hiển thị thế này, nên ta vẫn tách **read-model**
+riêng — chỉ là cách thực thi giờ nằm chung trong repository.
 
-> 💡 Đây là **CQRS-lite**: *Command* (ghi) và *Query* (đọc) đi hai đường khác nhau.
-> Write đi qua aggregate (+ Domain Service); Read đi thẳng JOIN. Chúng không dùng chung một model.
+> 💡 Vẫn giữ tinh thần **tách model đọc/ghi**: ghi đi qua aggregate (Order), đọc trả read-model phẳng
+> (`OrderDetailView`). Khác bản trước: hai bên giờ **chung một cổng** `I*Service`/`I*Repository`, không
+> tách interface query riêng.
 
 ---
 
@@ -53,23 +58,27 @@ controller trả thẳng read-model cho gọn — vì chúng đã đúng hình d
 
 ---
 
-## C. Query interface — `Domain/Abstractions/*Queries.cs` (input ở `Domain/Queries/`)
+## C. Method đọc — trên `I*Service` (API thấy) → `I*Repository` (thực thi)
 
-Read side nay phủ **7 nhóm query** (interface ở `Domain/Abstractions`, input gói trong `*SearchQuery` ở `Domain/Queries`):
+Read side phủ các method sau; chúng nằm **cùng `I*Service`** với phần ghi, service delegate xuống
+**`I*Repository`** (input gói trong `*SearchQuery` ở `Domain/Queries`):
 
-- `IProductQueries`: `GetByIdAsync`, `SearchAsync(ProductSearchQuery)`.
-- `IOrderQueries`: `GetOrderDetailAsync`, `GetCustomerHistoryAsync`, `SearchAsync(OrderSearchQuery)`, `GetStatusBreakdownAsync`.
-- `ICustomerQueries`: `GetByIdAsync`, `SearchAsync(CustomerSearchQuery)`, `GetTopCustomersAsync`.
-- `IEmployeeQueries`: `GetByIdAsync`, `SearchAsync(EmployeeSearchQuery)` (kèm số đơn đã bán).
-- `ICategoryQueries`: `GetCategorySummariesAsync`, `SearchAsync(CategorySearchQuery)`.
-- `IPaymentQueries`: `SearchAsync(PaymentSearchQuery)`, `GetOutstandingOrdersAsync`.
-- `IReportQueries`: `GetBestSellingProductsAsync`, `GetEmployeeSalesLeaderboardAsync`, `GetSalesByCategoryAsync`, `GetDailySalesAsync`, `GetLowStockProductsAsync`.
+- **Product** (`IProductService`/`IProductRepository`): `GetSummaryByIdAsync`, `SearchAsync(ProductSearchQuery)`.
+  *(Đổi tên `GetByIdAsync`→`GetSummaryByIdAsync` để khỏi đụng method ghi trả aggregate.)*
+- **Order**: `GetOrderDetailAsync`, `GetCustomerHistoryAsync`, `SearchAsync(OrderSearchQuery)`, `GetStatusBreakdownAsync`.
+- **Customer**: `GetSummaryByIdAsync`, `SearchAsync(CustomerSearchQuery)`, `GetTopCustomersAsync`.
+- **Employee**: `GetSummaryByIdAsync`, `SearchAsync(EmployeeSearchQuery)` (kèm số đơn đã bán).
+- **Category**: `GetCategorySummariesAsync`, `SearchAsync(CategorySearchQuery)`.
+- **Payment**: `SearchAsync(PaymentSearchQuery)`, `GetOutstandingOrdersAsync`.
+- **Report** (ca riêng, `IReportService`/`IReportRepository` — không có aggregate): `GetBestSellingProductsAsync`,
+  `GetEmployeeSalesLeaderboardAsync`, `GetSalesByCategoryAsync`, `GetDailySalesAsync`, `GetLowStockProductsAsync`.
 
-💡 Tách khỏi `I*Repository`: repository = ghi (trả aggregate), queries = đọc (trả read-model).
-Cùng một thực thể nhưng **hai mô hình cho hai mục đích**. Cả hai interface đều ở Domain; Infrastructure implement.
+💡 **Repository giờ trả cả read-model.** Trước đây tách cổng `I*Queries`; nay gộp để API chỉ thấy một cổng
+`I*Service`. Đánh đổi: repository không còn "thuần aggregate". Method đọc xuyên aggregate đặt ở module sở hữu
+dữ liệu (vd `GetCustomerHistoryAsync` ở Order, không phải Customer).
 
 💡 **Input gói thành object:** `SearchAsync` nhận **một** `*SearchQuery` (record) thay vì danh sách tham số
-dài; phía ghi cũng vậy với `Create*Command`. Chi tiết cơ chế + binding `[FromQuery]` xem
+dài; phía ghi cũng vậy với `*Command`. Chi tiết cơ chế + binding `[FromQuery]` xem
 [04-API.md](04-API.md) mục C và [06-Pagination-Search.md](06-Pagination-Search.md).
 
 ---
@@ -78,7 +87,7 @@ dài; phía ghi cũng vậy với `Create*Command`. Chi tiết cơ chế + bindi
 
 Đây là phần thú vị nhất — chứng minh lại luận điểm "đổi DB, business/hợp đồng không đổi".
 
-### SQL Server — JOIN thật (`Infrastructure.SqlServer/Queries/*.cs`)
+### SQL Server — JOIN thật (`Infrastructure.SqlServer/Repositories/*.cs`, phần "Read side")
 LINQ `join ... on ... equals ...` được EF Core dịch thành **một câu SQL có JOIN**, chạy trên DB:
 
 ```csharp
@@ -91,7 +100,7 @@ select new { ..., CustomerName = c.FullName, EmployeeName = e.FullName };
 Báo cáo dùng `group ... by ... into g` → `SUM`/`COUNT` đẩy xuống database. Lấy đúng dữ liệu cần,
 không kéo cả bảng về app. Lớp query nằm **trong** assembly SqlServer nên đọc được `internal DbSet`.
 
-### MongoDB — ghép trong bộ nhớ (`Infrastructure.MongoDB/Queries/*.cs`)
+### MongoDB — ghép trong bộ nhớ (`Infrastructure.MongoDB/Repositories/*.cs`, phần "Read side")
 Mongo **không có JOIN quan hệ** giữa các collection. Nên ta nạp document cần thiết rồi ghép bằng
 LINQ-to-objects (hoặc, "đúng Mongo" hơn cho dữ liệu lớn: aggregation `$lookup`/`$group`, hoặc
 denormalize sẵn tên vào document):
@@ -125,15 +134,18 @@ var aEmployee = await Employees.FirstOrDefaultAsync(e => e.Id == aOrder.Employee
 | `GET /api/payments/search` · `…/outstanding-orders` | `PagedResult<PaymentSummaryView>` · `PagedResult<OutstandingOrderView>` | Tìm thanh toán / đơn còn nợ |
 | `GET /api/reports/best-selling-products` · `employee-sales` · `sales-by-category` · `daily-sales` · `low-stock-products` | các `*View` / `PagedResult<…>` | Báo cáo GROUP BY |
 
-> Controller chỉ inject `I*Queries` cho các endpoint đọc này (đứng cạnh `I*Service` cho phần ghi).
-> Chi tiết tham số lọc/sort/phân trang: xem [06-Pagination-Search.md](06-Pagination-Search.md).
+> Controller gọi các endpoint đọc này qua **chính `I*Service`** (cùng cổng với phần ghi) — không còn
+> `I*Queries`. `ReportsController` dùng `IReportService`. Chi tiết tham số lọc/sort/phân trang: xem
+> [06-Pagination-Search.md](06-Pagination-Search.md).
 
 ---
 
 ## F. Nguyên tắc rút ra (ghi nhớ)
 
-1. **Write đi qua aggregate (Domain Service + Repository), Read đi thẳng JOIN (Queries).**
-2. Aggregate chỉ giữ id của aggregate khác — KHÔNG ôm tên/dữ liệu của nó.
-3. Read-model + query interface nằm trong **Domain** (vì chỉ còn 3 tầng), nhưng vẫn tách bạch với
-   aggregate: read-model chỉ để đọc, không phải business rule.
-4. Đọc lẻ 1 bản ghi → có thể enrich đơn giản; **danh sách/thống kê → dùng query JOIN** để tránh N+1.
+1. **Ghi trả aggregate, đọc trả read-model — nhưng cùng một cổng `I*Service`→`I*Repository`.** Không còn
+   cổng `I*Queries` riêng; mỗi module một cổng vào duy nhất cho cả đọc lẫn ghi.
+2. Aggregate chỉ giữ id của aggregate khác — KHÔNG ôm tên/dữ liệu của nó; muốn hiển thị thì JOIN ở read side.
+3. Read-model (`*View`) vẫn tách bạch với aggregate: chỉ để đọc, không phải business rule.
+4. Method đọc xuyên aggregate đặt ở module **sở hữu dữ liệu** (lịch sử đơn của khách ở Order). Báo cáo
+   không thuộc aggregate nào → `IReportService`/`IReportRepository` riêng.
+5. Đọc lẻ 1 bản ghi → enrich đơn giản; **danh sách/thống kê → JOIN/GROUP BY** trong repository để tránh N+1.
