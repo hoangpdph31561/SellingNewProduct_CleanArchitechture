@@ -4,13 +4,15 @@ using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
-using SellingNewProduct.Infrastructure.SqlServer.Repositories;
+using SellingNewProduct.Infrastructure.SqlServer.Repositories.Read;
+using SellingNewProduct.Infrastructure.SqlServer.Repositories.Write;
 
 namespace SellingNewProduct.Infrastructure.SqlServer;
 
 /// <summary>
-/// Composition for the SQL Server infrastructure. This is the only place that
-/// wires the domain repository interfaces to their SQL Server implementations.
+/// Composition for the SQL Server infrastructure. Wires the domain read/write repository
+/// interfaces to their SQL Server implementations plus the SQL Server unit of work. The read
+/// and write sides are deliberately separate classes (CQRS at the persistence layer).
 /// </summary>
 public static class DependencyInjection
 {
@@ -21,16 +23,27 @@ public static class DependencyInjection
 
         theServices.AddDbContext<AppDbContext>(o => o.UseSqlServer(aConnectionString));
 
-        theServices.AddScoped<IUserRepository, SqlServerUserRepository>();
-        theServices.AddScoped<ICustomerRepository, SqlServerCustomerRepository>();
-        theServices.AddScoped<IEmployeeRepository, SqlServerEmployeeRepository>();
-        theServices.AddScoped<ICategoryRepository, SqlServerCategoryRepository>();
-        theServices.AddScoped<IProductRepository, SqlServerProductRepository>();
-        theServices.AddScoped<IOrderRepository, SqlServerOrderRepository>();
-        theServices.AddScoped<IPaymentRepository, SqlServerPaymentRepository>();
+        // Write side (command handlers).
+        theServices.AddScoped<IUserWriteRepository, SqlServerUserWriteRepository>();
+        theServices.AddScoped<ICustomerWriteRepository, SqlServerCustomerWriteRepository>();
+        theServices.AddScoped<IEmployeeWriteRepository, SqlServerEmployeeWriteRepository>();
+        theServices.AddScoped<ICategoryWriteRepository, SqlServerCategoryWriteRepository>();
+        theServices.AddScoped<IProductWriteRepository, SqlServerProductWriteRepository>();
+        theServices.AddScoped<IOrderWriteRepository, SqlServerOrderWriteRepository>();
+        theServices.AddScoped<IPaymentWriteRepository, SqlServerPaymentWriteRepository>();
 
-        // Read side: reporting repository that spans many aggregates (no single aggregate owns it).
-        theServices.AddScoped<IReportRepository, SqlServerReportRepository>();
+        // Read side (query handlers).
+        theServices.AddScoped<IUserReadRepository, SqlServerUserReadRepository>();
+        theServices.AddScoped<ICustomerReadRepository, SqlServerCustomerReadRepository>();
+        theServices.AddScoped<IEmployeeReadRepository, SqlServerEmployeeReadRepository>();
+        theServices.AddScoped<ICategoryReadRepository, SqlServerCategoryReadRepository>();
+        theServices.AddScoped<IProductReadRepository, SqlServerProductReadRepository>();
+        theServices.AddScoped<IOrderReadRepository, SqlServerOrderReadRepository>();
+        theServices.AddScoped<IPaymentReadRepository, SqlServerPaymentReadRepository>();
+        theServices.AddScoped<IReportReadRepository, SqlServerReportReadRepository>();
+
+        // Unit of work: groups several write repositories into one atomic transaction.
+        theServices.AddScoped<IUnitOfWork, SqlServerUnitOfWork>();
 
         return theServices;
     }

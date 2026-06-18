@@ -1,73 +1,60 @@
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Application.Reports;
 using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.ReadModels;
 
 namespace SellingNewProduct.API.Controllers;
 
 /// <summary>
-/// Reporting endpoints — all backed by <see cref="IReportService"/>: JOIN + GROUP BY across
-/// several tables to produce aggregate numbers, bypassing the domain aggregate.
+/// Reporting endpoints — all backed by report queries (JOIN + GROUP BY across several tables to
+/// produce aggregate numbers, bypassing the domain aggregate). Sent through MediatR.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ReportsController : ControllerBase
 {
-    private readonly IReportService myReportService;
+    private readonly ISender mySender;
 
-    public ReportsController(IReportService theReportService)
+    public ReportsController(ISender theSender)
     {
-        myReportService = theReportService;
+        mySender = theSender;
     }
 
-    /// <summary>
-    /// Best-selling products ranked by quantity (with category name), paginated.
-    /// Page 1 is the classic "top N". E.g. <c>GET /api/reports/best-selling-products?thePage=1&amp;thePageSize=5</c>
-    /// </summary>
     [HttpGet("best-selling-products")]
     public async Task<ActionResult<PagedResult<BestSellingProductView>>> BestSellingProducts(
         [FromQuery] int thePage = 1,
         [FromQuery] int thePageSize = 10,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportService.GetBestSellingProductsAsync(thePage, thePageSize, theCancellationToken);
+        var aResult = await mySender.Send(new GetBestSellingProductsQuery(thePage, thePageSize), theCancellationToken);
         return Ok(aResult);
     }
 
-    /// <summary>Sales leaderboard per selling employee.</summary>
     [HttpGet("employee-sales")]
     public async Task<ActionResult<IReadOnlyList<EmployeeSalesView>>> EmployeeSales(CancellationToken theCancellationToken)
     {
-        var aResult = await myReportService.GetEmployeeSalesLeaderboardAsync(theCancellationToken);
+        var aResult = await mySender.Send(new GetEmployeeSalesLeaderboardQuery(), theCancellationToken);
         return Ok(aResult);
     }
 
-    /// <summary>Revenue grouped by product category, best-selling category first.</summary>
     [HttpGet("sales-by-category")]
     public async Task<ActionResult<IReadOnlyList<CategorySalesView>>> SalesByCategory(CancellationToken theCancellationToken)
     {
-        var aResult = await myReportService.GetSalesByCategoryAsync(theCancellationToken);
+        var aResult = await mySender.Send(new GetSalesByCategoryQuery(), theCancellationToken);
         return Ok(aResult);
     }
 
-    /// <summary>
-    /// Daily revenue time series, optionally bounded by a date range.
-    /// <c>GET /api/reports/daily-sales?theFromUtc=2026-01-01&amp;theToUtc=2026-06-30</c>
-    /// </summary>
     [HttpGet("daily-sales")]
     public async Task<ActionResult<IReadOnlyList<DailySalesView>>> DailySales(
         [FromQuery] DateTime? theFromUtc,
         [FromQuery] DateTime? theToUtc,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportService.GetDailySalesAsync(theFromUtc, theToUtc, theCancellationToken);
+        var aResult = await mySender.Send(new GetDailySalesQuery(theFromUtc, theToUtc), theCancellationToken);
         return Ok(aResult);
     }
 
-    /// <summary>
-    /// Products at or below a stock threshold (default 5), lowest stock first, paginated.
-    /// <c>GET /api/reports/low-stock-products?theThreshold=5&amp;thePage=1&amp;thePageSize=20</c>
-    /// </summary>
     [HttpGet("low-stock-products")]
     public async Task<ActionResult<PagedResult<LowStockProductView>>> LowStockProducts(
         [FromQuery] int theThreshold = 5,
@@ -75,7 +62,7 @@ public sealed class ReportsController : ControllerBase
         [FromQuery] int thePageSize = PageRequest.DefaultPageSize,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myReportService.GetLowStockProductsAsync(theThreshold, thePage, thePageSize, theCancellationToken);
+        var aResult = await mySender.Send(new GetLowStockProductsQuery(theThreshold, thePage, thePageSize), theCancellationToken);
         return Ok(aResult);
     }
 }

@@ -4,13 +4,16 @@ using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.Domain.Abstractions;
 using SellingNewProduct.Domain.Repositories;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
-using SellingNewProduct.Infrastructure.MongoDB.Repositories;
+using SellingNewProduct.Infrastructure.MongoDB.Repositories.Read;
+using SellingNewProduct.Infrastructure.MongoDB.Repositories.Write;
 
 namespace SellingNewProduct.Infrastructure.MongoDB;
 
 /// <summary>
-/// Composition for the MongoDB infrastructure. The only place that wires the
-/// domain repository interfaces to their MongoDB implementations.
+/// Composition for the MongoDB infrastructure. Wires the domain read/write repository interfaces
+/// to their MongoDB implementations plus the MongoDB unit of work. Read and write are separate
+/// classes (CQRS at the persistence layer). The unit of work needs a replica set connection to
+/// run transactions (see docs/mongo-replica-set.md).
 /// </summary>
 public static class DependencyInjection
 {
@@ -23,16 +26,27 @@ public static class DependencyInjection
 
         theServices.AddDbContext<MongoAppDbContext>(o => o.UseMongoDB(aConnectionString, aDatabaseName));
 
-        theServices.AddScoped<IUserRepository, MongoUserRepository>();
-        theServices.AddScoped<ICustomerRepository, MongoCustomerRepository>();
-        theServices.AddScoped<IEmployeeRepository, MongoEmployeeRepository>();
-        theServices.AddScoped<ICategoryRepository, MongoCategoryRepository>();
-        theServices.AddScoped<IProductRepository, MongoProductRepository>();
-        theServices.AddScoped<IOrderRepository, MongoOrderRepository>();
-        theServices.AddScoped<IPaymentRepository, MongoPaymentRepository>();
+        // Write side (command handlers).
+        theServices.AddScoped<IUserWriteRepository, MongoUserWriteRepository>();
+        theServices.AddScoped<ICustomerWriteRepository, MongoCustomerWriteRepository>();
+        theServices.AddScoped<IEmployeeWriteRepository, MongoEmployeeWriteRepository>();
+        theServices.AddScoped<ICategoryWriteRepository, MongoCategoryWriteRepository>();
+        theServices.AddScoped<IProductWriteRepository, MongoProductWriteRepository>();
+        theServices.AddScoped<IOrderWriteRepository, MongoOrderWriteRepository>();
+        theServices.AddScoped<IPaymentWriteRepository, MongoPaymentWriteRepository>();
 
-        // Read side: reporting repository that spans many aggregates (no single aggregate owns it).
-        theServices.AddScoped<IReportRepository, MongoReportRepository>();
+        // Read side (query handlers).
+        theServices.AddScoped<IUserReadRepository, MongoUserReadRepository>();
+        theServices.AddScoped<ICustomerReadRepository, MongoCustomerReadRepository>();
+        theServices.AddScoped<IEmployeeReadRepository, MongoEmployeeReadRepository>();
+        theServices.AddScoped<ICategoryReadRepository, MongoCategoryReadRepository>();
+        theServices.AddScoped<IProductReadRepository, MongoProductReadRepository>();
+        theServices.AddScoped<IOrderReadRepository, MongoOrderReadRepository>();
+        theServices.AddScoped<IPaymentReadRepository, MongoPaymentReadRepository>();
+        theServices.AddScoped<IReportReadRepository, MongoReportReadRepository>();
+
+        // Unit of work: multi-document transaction — requires a MongoDB replica set.
+        theServices.AddScoped<IUnitOfWork, MongoUnitOfWork>();
 
         return theServices;
     }
