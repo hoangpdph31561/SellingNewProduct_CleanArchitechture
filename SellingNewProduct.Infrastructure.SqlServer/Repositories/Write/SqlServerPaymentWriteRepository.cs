@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SellingNewProduct.Domain.Payments;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.SqlServer.Mapping;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 

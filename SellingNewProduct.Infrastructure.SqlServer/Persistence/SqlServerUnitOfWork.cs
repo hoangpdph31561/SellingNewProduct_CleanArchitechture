@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore.Storage;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 
 namespace SellingNewProduct.Infrastructure.SqlServer.Persistence;
 

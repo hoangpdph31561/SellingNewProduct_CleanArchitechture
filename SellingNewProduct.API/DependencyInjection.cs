@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.API.Filters;
 using SellingNewProduct.API.OpenApi;
 using SellingNewProduct.API.Security;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 
 namespace SellingNewProduct.API;
 

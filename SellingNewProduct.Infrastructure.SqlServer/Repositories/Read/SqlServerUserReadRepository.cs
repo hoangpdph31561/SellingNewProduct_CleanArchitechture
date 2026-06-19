@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Domain.Users;
 using SellingNewProduct.Infrastructure.SqlServer.Mapping;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;

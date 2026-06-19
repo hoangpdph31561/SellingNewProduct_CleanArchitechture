@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 
 namespace SellingNewProduct.Infrastructure.MongoDB.Persistence;
 

@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 
 namespace SellingNewProduct.API.Security;
 

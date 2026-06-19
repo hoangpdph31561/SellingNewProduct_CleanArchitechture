@@ -4,7 +4,7 @@ using SellingNewProduct.Domain.Orders;
 using SellingNewProduct.Domain.Payments;
 using SellingNewProduct.Domain.Queries;
 using SellingNewProduct.Domain.ReadModels;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.SqlServer.Persistence;
 
 namespace SellingNewProduct.Infrastructure.SqlServer.Repositories.Read;

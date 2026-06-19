@@ -3,7 +3,7 @@ using SellingNewProduct.Domain.Categories;
 using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Queries;
 using SellingNewProduct.Domain.ReadModels;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.MongoDB.Mapping;
 using SellingNewProduct.Infrastructure.MongoDB.Models;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;

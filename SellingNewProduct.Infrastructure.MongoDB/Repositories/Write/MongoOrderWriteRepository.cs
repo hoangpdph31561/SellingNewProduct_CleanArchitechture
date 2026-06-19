@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Orders;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.MongoDB.Mapping;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 

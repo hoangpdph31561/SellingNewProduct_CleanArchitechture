@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using SellingNewProduct.Domain.Abstractions;
-using SellingNewProduct.Domain.Repositories;
+using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.MongoDB.Persistence;
 using SellingNewProduct.Infrastructure.MongoDB.Repositories.Read;
 using SellingNewProduct.Infrastructure.MongoDB.Repositories.Write;
