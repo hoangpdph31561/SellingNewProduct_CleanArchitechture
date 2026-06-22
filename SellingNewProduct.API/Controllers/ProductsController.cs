@@ -1,7 +1,8 @@
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Application.Products;
 using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Queries;
 using SellingNewProduct.Domain.ReadModels;
@@ -12,71 +13,55 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class ProductsController : ControllerBase
 {
-    private readonly IProductService myProductService;
+    private readonly ISender mySender;
 
-    public ProductsController(IProductService theProductService)
+    public ProductsController(ISender theSender)
     {
-        myProductService = theProductService;
+        mySender = theSender;
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ProductResponse>>> GetAll(CancellationToken theCancellationToken)
     {
-        var aProducts = await myProductService.GetAllAsync(theCancellationToken);
+        var aProducts = await mySender.Send(new GetAllProductsQuery(), theCancellationToken);
         return Ok(aProducts.Select(p => p.ToResponse()).ToList());
     }
 
-    /// <summary>
-    /// Search/filter the catalogue (read side, enriched with the category name). Every filter
-    /// is optional. Example:
-    /// <c>GET /api/products/search?theName=ao&amp;theCategoryId=...&amp;thePriceFrom=100000&amp;theMaxStock=5&amp;theSortBy=price&amp;theSortDescending=true&amp;thePage=1&amp;thePageSize=20</c>
-    /// Returns one page plus the total matching count.
-    /// </summary>
     [HttpGet("search")]
     public async Task<ActionResult<PagedResult<ProductSummaryView>>> Search(
         [FromQuery] ProductSearchQuery theQuery,
         CancellationToken theCancellationToken = default)
     {
-        var aResult = await myProductService.SearchAsync(theQuery, theCancellationToken);
+        var aResult = await mySender.Send(new SearchProductsQuery(theQuery), theCancellationToken);
         return Ok(aResult);
     }
 
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<ProductResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aProduct = await myProductService.GetByIdAsync(theId, theCancellationToken);
+        var aProduct = await mySender.Send(new GetProductByIdQuery(theId), theCancellationToken);
         return aProduct is null ? NotFound() : Ok(aProduct.ToResponse());
     }
 
-    /// <summary>
-    /// One product enriched with the category name (read side), the flat counterpart of
-    /// <see cref="GetById"/>. <c>GET /api/products/{id}/summary</c>
-    /// </summary>
     [HttpGet("{theId:guid}/summary")]
     public async Task<ActionResult<ProductSummaryView>> GetSummary(Guid theId, CancellationToken theCancellationToken)
     {
-        var aView = await myProductService.GetSummaryByIdAsync(theId, theCancellationToken);
+        var aView = await mySender.Send(new GetProductSummaryByIdQuery(theId), theCancellationToken);
         return aView is null ? NotFound() : Ok(aView);
     }
 
     [HttpPost]
     public async Task<ActionResult<ProductResponse>> Create(CreateProductRequest theRequest, CancellationToken theCancellationToken)
     {
-        var aProduct = await myProductService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
-
+        var aProduct = await mySender.Send(theRequest.ToCommand(), theCancellationToken);
         return CreatedAtAction(nameof(GetById), new { theId = aProduct.Id }, aProduct.ToResponse());
     }
 
-    /// <summary>
-    /// Create several products in one request (bulk import). The unique-SKU rule is enforced both
-    /// within the batch and against the store. <c>POST /api/products/bulk</c>
-    /// </summary>
     [HttpPost("bulk")]
     public async Task<ActionResult<IReadOnlyList<ProductResponse>>> CreateMany(BulkCreateProductsRequest theRequest, CancellationToken theCancellationToken)
     {
-        var aCommands = theRequest.Items.Select(i => i.ToCommand()).ToList();
-        var aProducts = await myProductService.CreateManyAsync(aCommands, theCancellationToken);
-
+        var aCommand = new CreateManyProductsCommand(theRequest.Items.Select(i => i.ToCommand()).ToList());
+        var aProducts = await mySender.Send(aCommand, theCancellationToken);
         return Ok(aProducts.Select(p => p.ToResponse()).ToList());
     }
 }

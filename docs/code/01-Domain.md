@@ -188,67 +188,80 @@ Enum size áo quần: `S, M, L, XL, XXL`.
 
 ---
 
-## D. Repository interfaces (`Domain/Repositories/`)
+## D. Outbound ports — repository & UnitOfWork (`Domain/Interfaces/Outbound/`)
 
-7 interface, mỗi aggregate root một cái: `IUserRepository`, `ICustomerRepository`,
-`IEmployeeRepository`, `ICategoryRepository`, `IProductRepository`, `IOrderRepository`, `IPaymentRepository`.
+Theo CQRS, mỗi aggregate có **hai** repository tách biệt:
+- `I*WriteRepository` — trả/nhận **aggregate** (vd `IOrderWriteRepository`: `GetByIdAsync`, `AddAsync`, `UpdateAsync`).
+- `I*ReadRepository` — trả **read-model** `*View`/`PagedResult<T>` cho hiển thị (vd `IOrderReadRepository`).
 
-💡 **Điểm cốt lõi (Dependency Inversion):** interface khai báo Ở ĐÂY (Domain) nhưng **được hiện thực ở
-Infrastructure**. Domain nói "tôi cần lưu/đọc Order" mà không biết lưu vào SQL hay Mongo.
+Có base generic gọn: `IRepository`, `IReadRepository<TView>`, `IWriteRepository<TAggregate>`. Báo cáo
+không gắn aggregate → chỉ có `IReportReadRepository`. Ngoài ra:
+- **`IUnitOfWork`** — mở transaction gói nhiều repository write vào một commit (xem §G).
+- **`IPasswordHasher`** — hợp đồng băm mật khẩu (API implement); để ở Outbound vì là dịch vụ hạ tầng Domain *cần*.
 
-Mẫu chung mỗi interface: `GetByIdAsync`, `GetAllAsync` (hoặc query riêng), `AddAsync`, `UpdateAsync` —
-**cộng thêm các method ĐỌC trả read-model** (sau khi gộp read side vào repository, xem §F).
+💡 **Điểm cốt lõi (Dependency Inversion):** mọi interface ở đây khai báo trong Domain nhưng **được hiện
+thực ở Infrastructure** (repository) hoặc API (`IPasswordHasher`). Domain nói "tôi cần lưu/đọc Order" mà
+không biết lưu vào SQL hay Mongo.
 
-Một vài method truy vấn/nghiệp vụ đặc thù:
-- `ICategoryRepository.ExistsByNameAsync` — phục vụ rule "tên category không trùng" (Domain Service gọi).
-- `IProductRepository.ExistsBySkuAsync` — rule "SKU không trùng"; `GetByIdsAsync` (nạp nhiều product 1 lần
-  cho luồng đặt đơn), `AddRangeAsync`/`UpdateRangeAsync` (ghi hàng loạt — tạo nhiều SP, cập nhật tồn kho).
-- `IUserRepository.GetByUsernameAsync` — tìm theo username (đăng nhập).
-- `IProductRepository.GetByCategoryAsync` — sản phẩm theo danh mục.
-- `IOrderRepository.GetByCustomerAsync`, `GetByDateRangeAsync` — tra cứu đơn giản.
-- `IPaymentRepository.GetByOrderAsync` — thanh toán của một đơn (Domain Service dùng để chặn trả vượt nợ).
-- `ICustomerRepository.DeleteAsync` — xóa mềm khách theo Id.
-- Ngoài ra có **`IReportRepository`** (không gắn aggregate nào) cho các báo cáo GROUP BY xuyên nhiều bảng.
+Một vài method truy vấn/nghiệp vụ đặc thù (trên các write repository):
+- `ICategoryWriteRepository.ExistsByNameAsync` — rule "tên category không trùng".
+- `IProductWriteRepository.ExistsBySkuAsync` — rule "SKU không trùng"; `GetByIdsAsync` (nạp nhiều product
+  1 lần cho luồng đặt đơn), `AddRangeAsync`/`UpdateRangeAsync` (ghi hàng loạt).
+- `IUserWriteRepository.GetByUsernameAsync` — tìm theo username; `IPaymentWriteRepository.GetByOrderAsync`
+  — thanh toán của một đơn (chặn trả vượt nợ).
 
 > Tham số đều có `CancellationToken theCancellationToken = default` để hủy tác vụ async khi cần.
 
 ---
 
-## E. Domain Service (`Domain/Abstractions` + `Domain/Services`)
+## E. Inbound ports & Domain Service (`Domain/Interfaces/Inbound` + `Domain/Services`)
 
-💡 **Logic ghi sống ở đây, không ở controller.** Những gì cần phối hợp aggregate + repository (đặc biệt
-các kiểm tra phải truy vấn DB) đặt trong Domain Service. Controller chỉ gọi service.
+💡 **Logic ghi sống ở đây, không ở controller/handler.** Những gì cần phối hợp aggregate + repository
+(đặc biệt các kiểm tra phải truy vấn DB) đặt trong Domain Service. Tầng Application (handler) chỉ gọi service.
 
-📁 **Tổ chức theo loại** (không nhét vào folder aggregate): interface ở `Domain/Abstractions/`
-(I*Service x7 + `IReportService` + `IPasswordHasher` — KHÔNG còn I*Queries), implementation ở
-`Domain/Services/`. Folder theo aggregate (`Categories/`, `Orders/`…) giờ chỉ chứa entity/enum/event.
+📁 **Tổ chức theo loại + tách CQRS:** interface (inbound port) ở `Domain/Interfaces/Inbound/`:
+`I*WriteService` (ghi) và `I*ReadService` (đọc) cho mỗi aggregate + `IReportReadService`, kèm base
+`IService`/`IReadService`/`IWriteService`. Implementation ở `Domain/Services/` (`*WriteService` +
+`*ReadService`, đều `internal sealed`). Folder theo aggregate chỉ chứa entity/enum/event/input record.
 
-- Mỗi module một cặp: `ICategoryService` (public, `Abstractions/` — API thấy) + `CategoryService` (`internal sealed`, `Services/` — chứa logic).
-- Ví dụ `CategoryService.CreateAsync`: tạo qua `Category.Create` (validate + trim), gọi `ExistsByNameAsync`
-  để chặn trùng tên (ném **`ConflictException`** → 409), rồi `AddAsync`. Trả `Category` cho API.
-- `ProductService`/`OrderService`/`PaymentService`/`EmployeeService`: kiểm entity liên quan tồn tại,
-  ném `NotFoundException` nếu thiếu → API trả 404.
-- **Nghiệp vụ phối hợp nhiều aggregate (mới):**
-  - `ProductService.CreateAsync` chặn **SKU trùng** (`ConflictException`); `CreateManyAsync` tạo hàng loạt (AddRange).
-  - `OrderService.PlaceAsync` đặt cả đơn + item (Draft): kiểm product Active + đủ tồn kho. `ConfirmAsync`
-    **trừ kho** từng dòng rồi `UpdateRangeAsync`; `CancelAsync` **hoàn kho** nếu đơn đang Confirmed.
-  - `PaymentService.CreateAsync` chặn trả đơn chưa Confirmed/Shipped, sai tiền tệ, hoặc trả vượt số còn nợ.
-  - 💡 Đây là chỗ "nghiệp vụ thật" sống — service không chỉ gọi thẳng repository mà phối hợp Order ↔ Product,
-    Payment ↔ Order. Stock dùng `Product.DecreaseStock/IncreaseStock` (invariant kho không âm nằm trong aggregate).
-- `UserService`: băm mật khẩu qua **`IPasswordHasher`** (interface khai báo ở `Domain/Users`, API implement)
+- Ví dụ `CategoryWriteService.CreateAsync`: tạo qua `Category.Create` (validate + trim), gọi
+  `ExistsByNameAsync` chặn trùng tên (ném **`ConflictException`** → 409), rồi `AddAsync`. `CategoryReadService`
+  lo `GetByIdAsync`/`SearchAsync`/`GetSummariesAsync`.
+- `Product*/Order*/Payment*/Employee*Service`: kiểm entity liên quan tồn tại, ném `NotFoundException` → 404.
+- **Nghiệp vụ phối hợp nhiều aggregate:**
+  - `ProductWriteService.CreateAsync` chặn **SKU trùng** (`ConflictException`); `CreateManyAsync` tạo hàng loạt (AddRange).
+  - `OrderWriteService.PlaceAsync` đặt cả đơn + item (Draft): kiểm product Active + đủ tồn kho. `ConfirmAsync`
+    **trừ kho** từng dòng rồi ghi qua **`IUnitOfWork`** (1 transaction); `CancelAsync` **hoàn kho** nếu đơn đang Confirmed.
+  - `PaymentWriteService.CreateAsync` chặn trả đơn chưa Confirmed/Shipped, sai tiền tệ, hoặc trả vượt số còn nợ.
+  - 💡 Đây là chỗ "nghiệp vụ thật" sống — phối hợp Order ↔ Product, Payment ↔ Order. Stock dùng
+    `Product.DecreaseStock/IncreaseStock` (invariant kho không âm nằm trong aggregate).
+- `UserWriteService`: băm mật khẩu qua **`IPasswordHasher`** (interface ở `Interfaces/Outbound`, API implement)
   rồi `User.Create`. 💡 Domain định nghĩa hợp đồng, tầng ngoài cắm cách làm vào — vẫn đúng chiều phụ thuộc.
-- Đăng ký: `Domain/DependencyInjection.cs` → `AddDomainServices()`; `Program.cs` gọi nó. Nhờ vậy `*Service`
-  để `internal` mà API vẫn dùng được qua interface.
+- Đăng ký: `Domain/DependencyInjection.cs` → `AddDomainServices()` (bind từng inbound port → `*Service`).
+  Hàm này được `AddApplicationServices()` gọi. Nhờ vậy `*Service` để `internal` mà tầng ngoài vẫn dùng qua interface.
 
 > Domain ref `Microsoft.Extensions.DependencyInjection.Abstractions` chỉ để có `IServiceCollection` cho
-> `AddDomainServices()` — đây là contract DI thuần, không phải hạ tầng, nên Domain vẫn "sạch".
+> `AddDomainServices()` — contract DI thuần, không phải hạ tầng. Domain **không** ref MediatR (chỉ Application có).
 
 ---
 
-## F. Read side — gộp vào Service + Repository (`Domain/ReadModels`, `Domain/Queries`)
+## F. Read side — read service/repository (`Domain/ReadModels`, `Domain/Queries`)
 
-KHÔNG còn cổng `I*Queries` riêng. Method đọc (Search/Summary/history/báo cáo) nằm **cùng `I*Service`** với
-phần ghi, service delegate xuống **`I*Repository`** — và repository được trả **read-model** (`*View` ở
-`Domain/ReadModels`; `PagedResult<T>` ở `Domain/Common`). Input đọc gói trong record `*SearchQuery`
-(`Domain/Queries`). Báo cáo không gắn aggregate → `IReportService` + `IReportRepository` riêng. Đây vẫn là
-phần ĐỌC (JOIN/GROUP BY nhiều bảng), read-model tách bạch với aggregate. Chi tiết: [05-Application.md](05-Application.md).
+Method đọc (Search/Summary/history/báo cáo) nằm trên **`I*ReadService`**, delegate xuống **`I*ReadRepository`**
+— repository read trả **read-model** (`*View` ở `Domain/ReadModels`; `PagedResult<T>` ở `Domain/Common`).
+Input đọc gói trong record `*SearchQuery` (`Domain/Queries`). Báo cáo không gắn aggregate →
+`IReportReadService` + `IReportReadRepository`. Đây là phần ĐỌC (JOIN/GROUP BY nhiều bảng), read-model
+tách bạch với aggregate. Chi tiết cách thực thi (SQL JOIN vs Mongo stitch): [05-Application.md](05-Application.md) §E.
+
+---
+
+## G. Unit of Work (`Domain/Interfaces/Outbound/IUnitOfWork.cs`)
+
+`DbContext.SaveChanges()` đã atomic nhưng chỉ trong một lần gọi. Khi một use-case ghi **≥2 aggregate qua
+≥2 repository** (vd `ConfirmAsync`: trừ kho `Product` + đổi trạng thái `Order`), ta cần transaction bao
+ngoài. `IUnitOfWork.BeginTransactionAsync()` trả một `IUnitOfWorkTransaction` (`CommitAsync`/`RollbackAsync`/
+`DisposeAsync`). Service gọi nhiều repository rồi `CommitAsync` một lần.
+
+💡 Implementation ở Infrastructure: `SqlServerUnitOfWork` (EF transaction) và `MongoUnitOfWork`
+(**multi-document transaction** — cần MongoDB **replica set**, xem [03-Infrastructure-MongoDB.md](03-Infrastructure-MongoDB.md)
+và ARCHITECTURE §11). Use-case ghi 1 aggregate (vd `ShipAsync`) thì không dùng UnitOfWork.

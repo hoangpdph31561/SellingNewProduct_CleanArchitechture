@@ -1,151 +1,198 @@
-# 05 — Read side (gộp vào Service + Repository)
+# 05 — Tầng Application (CQRS / MediatR)
 
-> ⚠️ **Cập nhật kiến trúc (mới nhất):** read side **đã gộp vào `I*Service` + `I*Repository`** — KHÔNG
-> còn cổng `I*Queries` riêng. API chỉ dùng `I*Service`; service gọi `I*Repository`; **repository được
-> trả read-model**. (Trước đó từng tách cổng query riêng — CQRS-lite; nay gộp để mỗi module một cổng vào.)
-> Nơi đặt code hiện tại:
-> - **Method đọc** → nằm trên `I*Service` (`Domain/Abstractions/`) + `I*Repository` (`Domain/Repositories/`)
-> - **Query input object** (`*SearchQuery`) → `Domain/Queries/` (vẫn giữ — chỉ là DTO input)
-> - **Read-model output** (`*View`, `PagedResult`) → `Domain/ReadModels/`, `Domain/Common/`
-> - **Cách thực thi** → nằm ngay trong `Infrastructure.*/Repositories/` (KHÔNG còn folder `Queries/`)
-> - **Báo cáo** (không có aggregate) → `IReportService` + `IReportRepository` riêng
->
-> (Tên file vẫn là `05-Application.md` cho khỏi vỡ link; nội dung là "read side trong Domain".)
+Application là tầng **điều phối use-case**, nằm giữa API và Domain:
 
-Read side sinh ra để trả lời nhu cầu rất thực tế: **hiển thị dữ liệu ghép từ nhiều bảng** — ví dụ
-"đơn hàng này của khách *Nguyễn Văn A*, do nhân viên *Trần Thị B* bán", hay "khách này đã đặt 12 đơn,
-tổng 5.400.000đ". Aggregate (phía GHI) không hợp để hiển thị thế này, nên ta vẫn tách **read-model**
-riêng — chỉ là cách thực thi giờ nằm chung trong repository.
+```
+API (Controller, ISender) ──► Application (Command/Query + Handler + Validator) ──► Domain (I*ReadService / I*WriteService)
+```
 
-> 💡 Vẫn giữ tinh thần **tách model đọc/ghi**: ghi đi qua aggregate (Order), đọc trả read-model phẳng
-> (`OrderDetailView`). Khác bản trước: hai bên giờ **chung một cổng** `I*Service`/`I*Repository`, không
-> tách interface query riêng.
+API **không** gọi thẳng Domain Service. Nó dựng một **Command** (ghi) hoặc **Query** (đọc) rồi gửi qua
+MediatR (`ISender.Send(...)`). MediatR tìm đúng **Handler**, chạy qua **pipeline** (validate trước), và
+handler — *mỏng* — chỉ gọi xuống Domain Service. Toàn bộ business rule thật vẫn ở Domain; Application chỉ
+là lớp "vào use-case" + validate hình dạng request.
+
+> 💡 Vì sao có tầng này? (1) Tách "đường vào use-case" khỏi controller HTTP — cùng một command có thể được
+> gửi từ controller, từ test, từ một job nền… (2) Gom **cross-cutting concern** (validation, sau này có thể
+> thêm logging/transaction/caching) vào **pipeline behavior** thay vì rải khắp controller. (3) Theo CQRS:
+> Command và Query là hai loại thông điệp tách bạch.
 
 ---
 
-## A. Read-model đặt ở đâu? (3 lựa chọn đã cân nhắc)
+## A. Một feature = một file `.cs`
 
-| Cách | Đánh giá |
-|------|--------|
-| Nhồi `CustomerName` vào aggregate `Order` | ❌ Vỡ ranh giới aggregate; khách đổi tên → dữ liệu trong Order lỗi thời |
-| Để read-model trong project **API** | ❌ Infrastructure phải `return` read-model khi implement query, mà Infra **không ref API** (ngược chiều Dependency Rule) → không compile |
-| Để read-model + query interface trong **Domain** | ✅ Cả Infra lẫn API đều thấy (đều ref Domain); giữ đúng 3 tầng |
-
-**Chiều phụ thuộc:** `API → Infrastructure → Domain`. Đánh đổi khi bỏ Application: Domain "rộng" hơn
-(ôm cả read-model hiển thị). Bù lại chỉ còn 3 tầng, đơn giản hơn cho mục tiêu học. Read-model vẫn là
-kiểu chỉ-đọc, tách bạch hoàn toàn với aggregate nghiệp vụ.
-
----
-
-## B. Read-model — `Domain/ReadModels/*.cs`
-
-Các `record` phẳng, **chỉ để hiển thị** (không có method, không invariant). Khác `*Response` DTO ở API:
-read-model là *kết quả truy vấn* (Infra tạo ra), DTO là *hợp đồng HTTP* (API tạo ra). Ở dự án này
-controller trả thẳng read-model cho gọn — vì chúng đã đúng hình dạng cần hiển thị.
-
-- `OrderDetailView` — 1 đơn + `CustomerName` + `EmployeeName` + danh sách `OrderLineView` + `AmountPaid`.
-- `CustomerOrderHistoryView` — `TotalOrders`, `TotalSpent` + danh sách `CustomerOrderItemView` (kèm tên NV).
-- `OrderSummaryView`, `OrderStatusCountView` — dòng tóm tắt danh sách / thống kê theo trạng thái.
-- `ProductSummaryView` — dòng tóm tắt catalogue (kèm `CategoryName` qua JOIN).
-- `CustomerSummaryView`, `TopCustomerView` — danh sách khách / xếp hạng chi tiêu.
-- `EmployeeSummaryView` — danh sách nhân viên (kèm số đơn đã bán).
-- `CategorySummaryView` — danh mục kèm số sản phẩm + giá trị tồn.
-- `PaymentSummaryView`, `OutstandingOrderView` — danh sách thanh toán / đơn còn nợ.
-- Báo cáo (GROUP BY): `BestSellingProductView`, `EmployeeSalesView`, `CategorySalesView`, `DailySalesView`, `LowStockProductView`.
-
-> 📄 Phân trang, tìm kiếm theo tên, lọc nhiều tiêu chí và sắp xếp được giải thích riêng ở
-> [06-Pagination-Search.md](06-Pagination-Search.md).
-
----
-
-## C. Method đọc — trên `I*Service` (API thấy) → `I*Repository` (thực thi)
-
-Read side phủ các method sau; chúng nằm **cùng `I*Service`** với phần ghi, service delegate xuống
-**`I*Repository`** (input gói trong `*SearchQuery` ở `Domain/Queries`):
-
-- **Product** (`IProductService`/`IProductRepository`): `GetSummaryByIdAsync`, `SearchAsync(ProductSearchQuery)`.
-  *(Đổi tên `GetByIdAsync`→`GetSummaryByIdAsync` để khỏi đụng method ghi trả aggregate.)*
-- **Order**: `GetOrderDetailAsync`, `GetCustomerHistoryAsync`, `SearchAsync(OrderSearchQuery)`, `GetStatusBreakdownAsync`.
-- **Customer**: `GetSummaryByIdAsync`, `SearchAsync(CustomerSearchQuery)`, `GetTopCustomersAsync`.
-- **Employee**: `GetSummaryByIdAsync`, `SearchAsync(EmployeeSearchQuery)` (kèm số đơn đã bán).
-- **Category**: `GetCategorySummariesAsync`, `SearchAsync(CategorySearchQuery)`.
-- **Payment**: `SearchAsync(PaymentSearchQuery)`, `GetOutstandingOrdersAsync`.
-- **Report** (ca riêng, `IReportService`/`IReportRepository` — không có aggregate): `GetBestSellingProductsAsync`,
-  `GetEmployeeSalesLeaderboardAsync`, `GetSalesByCategoryAsync`, `GetDailySalesAsync`, `GetLowStockProductsAsync`.
-
-💡 **Repository giờ trả cả read-model.** Trước đây tách cổng `I*Queries`; nay gộp để API chỉ thấy một cổng
-`I*Service`. Đánh đổi: repository không còn "thuần aggregate". Method đọc xuyên aggregate đặt ở module sở hữu
-dữ liệu (vd `GetCustomerHistoryAsync` ở Order, không phải Customer).
-
-💡 **Input gói thành object:** `SearchAsync` nhận **một** `*SearchQuery` (record) thay vì danh sách tham số
-dài; phía ghi cũng vậy với `*Command`. Chi tiết cơ chế + binding `[FromQuery]` xem
-[04-API.md](04-API.md) mục C và [06-Pagination-Search.md](06-Pagination-Search.md).
-
----
-
-## D. Hai cách implement CÙNG một interface
-
-Đây là phần thú vị nhất — chứng minh lại luận điểm "đổi DB, business/hợp đồng không đổi".
-
-### SQL Server — JOIN thật (`Infrastructure.SqlServer/Repositories/*.cs`, phần "Read side")
-LINQ `join ... on ... equals ...` được EF Core dịch thành **một câu SQL có JOIN**, chạy trên DB:
+Mỗi use-case gói **chung một file**: record input + handler + validator (nếu có). Không tách nhỏ mỗi class
+một file. Ví dụ `Categories/Commands/CreateCategoryCommand.cs`:
 
 ```csharp
-from o in myAppDbContext.Orders.AsNoTracking()
-join c in myAppDbContext.Customers on o.CustomerId equals c.Id
-join e in myAppDbContext.Employees on o.EmployeeId equals e.Id
-where o.Id == theOrderId
-select new { ..., CustomerName = c.FullName, EmployeeName = e.FullName };
-```
-Báo cáo dùng `group ... by ... into g` → `SUM`/`COUNT` đẩy xuống database. Lấy đúng dữ liệu cần,
-không kéo cả bảng về app. Lớp query nằm **trong** assembly SqlServer nên đọc được `internal DbSet`.
+// 1) Command — record input, là IRequest<T> (T = kết quả trả về)
+public sealed record CreateCategoryCommand(string Name, string Description) : IRequest<Category>;
 
-### MongoDB — ghép trong bộ nhớ (`Infrastructure.MongoDB/Repositories/*.cs`, phần "Read side")
-Mongo **không có JOIN quan hệ** giữa các collection. Nên ta nạp document cần thiết rồi ghép bằng
-LINQ-to-objects (hoặc, "đúng Mongo" hơn cho dữ liệu lớn: aggregation `$lookup`/`$group`, hoặc
-denormalize sẵn tên vào document):
+// 2) Validator — chỉ kiểm FORMAT (FluentValidation)
+public sealed class CreateCategoryCommandValidator : AbstractValidator<CreateCategoryCommand>
+{
+    public CreateCategoryCommandValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(150);
+        RuleFor(x => x.Description).MaximumLength(1000);
+    }
+}
+
+// 3) Handler — MỎNG: chỉ gọi Domain Service, KHÔNG business, KHÔNG repository
+public sealed class CreateCategoryCommandHandler : IRequestHandler<CreateCategoryCommand, Category>
+{
+    private readonly ICategoryWriteService myCategoryWriteService;
+    public CreateCategoryCommandHandler(ICategoryWriteService theService) => myCategoryWriteService = theService;
+
+    public Task<Category> Handle(CreateCategoryCommand theCommand, CancellationToken theCancellationToken) =>
+        myCategoryWriteService.CreateAsync(theCommand.Name, theCommand.Description, theCancellationToken);
+}
+```
+
+Query cũng vậy — record `*Query` + handler chung 1 file (validator thường không cần):
 
 ```csharp
-var aOrder = await Orders.FirstOrDefaultAsync(o => o.Id == theOrderId && o.Status != DeletedStatus);
-var aCustomer = await Customers.FirstOrDefaultAsync(c => c.Id == aOrder.CustomerId);
-var aEmployee = await Employees.FirstOrDefaultAsync(e => e.Id == aOrder.EmployeeId);
-// ... rồi tạo OrderDetailView. Details đã NHÚNG sẵn trong aOrder.Details.
+public sealed record GetCategoryByIdQuery(Guid Id) : IRequest<Category?>;
+
+public sealed class GetCategoryByIdQueryHandler : IRequestHandler<GetCategoryByIdQuery, Category?>
+{
+    private readonly ICategoryReadService myCategoryReadService;
+    public GetCategoryByIdQueryHandler(ICategoryReadService theService) => myCategoryReadService = theService;
+
+    public Task<Category?> Handle(GetCategoryByIdQuery theQuery, CancellationToken theCancellationToken)
+        => myCategoryReadService.GetByIdAsync(theQuery.Id, theCancellationToken);
+}
 ```
+
+> 💡 **Handler mỏng có chủ ý.** Logic "tên category không trùng" KHÔNG ở handler mà ở
+> `CategoryWriteService.CreateAsync` (Domain) — vì đó là business rule. Handler chỉ là adapter
+> command → service. Nhờ vậy đổi cách "vào" (MediatR ↔ gọi trực tiếp) không đụng business.
+
+**File/record dùng chung nhiều feature** tách riêng (không thuộc một feature nào):
+- `Products/Commands/ProductCommandMapping.cs` — `ToNewProduct()` dùng bởi cả `CreateProduct` lẫn `CreateManyProducts`.
+- `Orders/Commands/OrderItemCommand.cs` — record line-item dùng trong `PlaceOrderCommand`.
+
+---
+
+## B. Command vs Query (CQRS)
+
+| | Command (ghi) | Query (đọc) |
+|---|---|---|
+| Thư mục | `Application/<Aggregate>/Commands` | `Application/<Aggregate>/Queries` |
+| Gọi xuống | `I*WriteService` (Domain inbound) | `I*ReadService` (Domain inbound) |
+| Trả về | aggregate (vd `Category`, `Order`) | read-model `*View` / `PagedResult<T>` / aggregate đơn lẻ |
+| Ví dụ | `CreateCategoryCommand`, `PlaceOrderCommand`, `ConfirmOrderCommand` | `GetCategoryByIdQuery`, `SearchProductsQuery`, `GetSalesByCategoryQuery` |
+
+Search có dạng riêng: query của Application bọc `*SearchQuery` (record filter của Domain) rồi forward:
+
+```csharp
+public sealed record SearchCategoriesQuery(CategorySearchQuery Filter) : IRequest<PagedResult<CategorySummaryView>>;
+// Handler: => myCategoryReadService.SearchAsync(theQuery.Filter, ct);
+```
+
+---
+
+## C. ValidationBehavior — validate trong pipeline MediatR
+
+`Common/Behaviors/ValidationBehavior.cs` là một `IPipelineBehavior<TRequest,TResponse>` đăng ký làm
+**bước ngoài cùng** của pipeline. Trước khi handler chạy, nó gom mọi `IValidator<TRequest>` đã đăng ký,
+chạy hết, gộp lỗi; có lỗi → ném `ValidationException`.
+
+```csharp
+public async Task<TResponse> Handle(TRequest theRequest, RequestHandlerDelegate<TResponse> theNext, CancellationToken ct)
+{
+    if (!myValidators.Any()) return await theNext();          // không có validator → đi thẳng
+    var aContext = new ValidationContext<TRequest>(theRequest);
+    var aFailures = (await Task.WhenAll(myValidators.Select(v => v.ValidateAsync(aContext, ct))))
+        .SelectMany(r => r.Errors).Where(f => f is not null).ToList();
+    if (aFailures.Count != 0) throw new ValidationException(aFailures);   // → middleware → 400
+    return await theNext();
+}
+```
+
+💡 So với cách cũ (action filter ở API): validation giờ là concern của **pipeline CQRS** — một chỗ duy
+nhất, áp cho mọi command/query, không phụ thuộc ASP.NET. Controller chỉ `mySender.Send(...)`. `ValidationException`
+nổi lên `ExceptionHandlingMiddleware` của API → **400** (xem [04-API.md](04-API.md) mục E).
+
+---
+
+## D. DI — `Application/DependencyInjection.cs`
+
+```csharp
+public static IServiceCollection AddApplicationServices(this IServiceCollection theServices)
+{
+    var aAssembly = typeof(DependencyInjection).Assembly;
+    theServices.AddDomainServices();                                            // business rule (Domain)
+    theServices.AddMediatR(c => c.RegisterServicesFromAssembly(aAssembly));      // handler + ISender
+    theServices.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));  // validate trước handler
+    theServices.AddValidatorsFromAssembly(aAssembly);                           // mọi *Validator
+    return theServices;
+}
+```
+
+💡 `AddApplicationServices()` **gọi luôn** `AddDomainServices()` — vì handler phụ thuộc Domain Service.
+`Program.cs` chỉ cần gọi `AddApplicationServices()` cho cụm business + CQRS (không gọi `AddDomainServices`
+riêng nữa).
+
+---
+
+## E. Read side — read-model & JOIN nhiều bảng (SQL vs Mongo)
+
+Phần ĐỌC vẫn cần dữ liệu ghép nhiều bảng (vd "đơn này của khách *Nguyễn Văn A*, do *Trần Thị B* bán"),
+mà aggregate (phía ghi) chỉ giữ id, không hợp để hiển thị. Nên dự án tách **read-model** (`*View`) ở
+`Domain/ReadModels`, do **read repository** trả về. Query handler chỉ forward xuống `I*ReadService` →
+`I*ReadRepository`.
+
+> 💡 Vẫn giữ tinh thần **tách model đọc/ghi (CQRS)**: ghi đi qua aggregate (Order), đọc trả read-model
+> phẳng (`OrderDetailView`). Read và write có service/repository **riêng** ở Domain (xem ARCHITECTURE §7b).
+
+### Read-model — `Domain/ReadModels/*.cs`
+Các `record` phẳng, **chỉ để hiển thị** (không method, không invariant): `OrderDetailView`,
+`CustomerOrderHistoryView`, `OrderSummaryView`, `ProductSummaryView`, `CustomerSummaryView`,
+`TopCustomerView`, `EmployeeSummaryView`, `CategorySummaryView`, `PaymentSummaryView`, `OutstandingOrderView`,
+và nhóm báo cáo (GROUP BY): `BestSellingProductView`, `EmployeeSalesView`, `CategorySalesView`,
+`DailySalesView`, `LowStockProductView`.
+
+> 📄 Phân trang, tìm kiếm theo tên, lọc & sắp xếp: xem [06-Pagination-Search.md](06-Pagination-Search.md).
+
+### Hai cách implement CÙNG một read repository
+Đây là phần chứng minh "đổi DB, business/hợp đồng không đổi":
+
+**SQL Server — JOIN thật** (`Infrastructure.SqlServer/Repositories/Read/*.cs`): LINQ
+`join ... on ... equals ...` được EF Core dịch thành **một câu SQL có JOIN** chạy trên DB; báo cáo dùng
+`group ... by ... into g` → `SUM`/`COUNT` đẩy xuống database.
+
+**MongoDB — ghép trong bộ nhớ** (`Infrastructure.MongoDB/Repositories/Read/*.cs`): Mongo không có JOIN
+quan hệ → nạp document cần thiết rồi ghép bằng LINQ-to-objects (hoặc, "đúng Mongo" hơn cho dữ liệu lớn:
+`$lookup`/`$group`, hoặc denormalize sẵn tên vào document).
 
 > Lưu ý soft-delete: SQL có **Global Query Filter** (`Status != Deleted`) tự áp dụng; Mongo **không có**,
-> nên mỗi query phải tự thêm điều kiện `Status != DeletedStatus`.
+> nên mỗi read query phải tự thêm `Status != DeletedStatus`.
 
 ---
 
-## E. Endpoint dùng read side
+## F. Endpoint dùng Application (qua `ISender`)
 
-| Method | Trả về | Câu hỏi nó trả lời |
-|--------|--------|---------------------|
-| `GET /api/orders/{id}/view` | `OrderDetailView` | Đơn này của ai, ai bán, gồm món gì, đã trả bao nhiêu |
-| `GET /api/orders?CustomerName=&Status=&SortBy=&Page=…` | `PagedResult<OrderSummaryView>` | Danh sách/tìm đơn (kèm tên), phân trang & sort |
-| `GET /api/orders/status-breakdown` | `OrderStatusCountView[]` | Mỗi trạng thái có bao nhiêu đơn, tổng tiền |
-| `GET /api/products/search?Name=&CategoryId=&SortBy=&Page=…` | `PagedResult<ProductSummaryView>` | Tìm/lọc sản phẩm trong catalogue |
-| `GET /api/products/{id}/summary` | `ProductSummaryView` | 1 sản phẩm kèm tên loại hàng |
-| `GET /api/customers/search?Name=&City=&Page=…` | `PagedResult<CustomerSummaryView>` | Tìm/lọc khách |
-| `GET /api/customers/top` | `PagedResult<TopCustomerView>` | Khách chi tiêu nhiều nhất |
-| `GET /api/customers/{id}/orders` | `CustomerOrderHistoryView` | Khách này đã đặt mấy đơn, là những đơn nào |
-| `GET /api/employees/search?Name=&Position=&Page=…` | `PagedResult<EmployeeSummaryView>` | Tìm/lọc nhân viên (kèm số đơn) |
-| `GET /api/categories/summaries` · `…/search` | `CategorySummaryView[]` · `PagedResult<…>` | Danh mục kèm số SP + giá trị tồn |
-| `GET /api/payments/search` · `…/outstanding-orders` | `PagedResult<PaymentSummaryView>` · `PagedResult<OutstandingOrderView>` | Tìm thanh toán / đơn còn nợ |
-| `GET /api/reports/best-selling-products` · `employee-sales` · `sales-by-category` · `daily-sales` · `low-stock-products` | các `*View` / `PagedResult<…>` | Báo cáo GROUP BY |
+| Method | Command/Query gửi đi | Trả về |
+|--------|----------------------|--------|
+| `POST /api/categories` | `CreateCategoryCommand` | `CategoryResponse` |
+| `GET /api/categories/{id}` | `GetCategoryByIdQuery` | `CategoryResponse` |
+| `GET /api/categories/search` | `SearchCategoriesQuery` | `PagedResult<CategorySummaryView>` |
+| `POST /api/orders` | `PlaceOrderCommand` | `OrderResponse` |
+| `POST /api/orders/{id}/confirm` | `ConfirmOrderCommand` | `OrderResponse` |
+| `GET /api/orders/{id}/view` | `GetOrderDetailViewQuery` | `OrderDetailView` |
+| `GET /api/reports/sales-by-category` | `GetSalesByCategoryQuery` | `CategorySalesView[]` |
 
-> Controller gọi các endpoint đọc này qua **chính `I*Service`** (cùng cổng với phần ghi) — không còn
-> `I*Queries`. `ReportsController` dùng `IReportService`. Chi tiết tham số lọc/sort/phân trang: xem
-> [06-Pagination-Search.md](06-Pagination-Search.md).
+> Controller chỉ inject `ISender` và `mySender.Send(...)`. Chi tiết tham số lọc/sort/phân trang: xem
+> [06-Pagination-Search.md](06-Pagination-Search.md); envelope `ApiResponse` + map lỗi: [04-API.md](04-API.md).
 
 ---
 
-## F. Nguyên tắc rút ra (ghi nhớ)
+## G. Nguyên tắc rút ra (ghi nhớ)
 
-1. **Ghi trả aggregate, đọc trả read-model — nhưng cùng một cổng `I*Service`→`I*Repository`.** Không còn
-   cổng `I*Queries` riêng; mỗi module một cổng vào duy nhất cho cả đọc lẫn ghi.
-2. Aggregate chỉ giữ id của aggregate khác — KHÔNG ôm tên/dữ liệu của nó; muốn hiển thị thì JOIN ở read side.
-3. Read-model (`*View`) vẫn tách bạch với aggregate: chỉ để đọc, không phải business rule.
-4. Method đọc xuyên aggregate đặt ở module **sở hữu dữ liệu** (lịch sử đơn của khách ở Order). Báo cáo
-   không thuộc aggregate nào → `IReportService`/`IReportRepository` riêng.
-5. Đọc lẻ 1 bản ghi → enrich đơn giản; **danh sách/thống kê → JOIN/GROUP BY** trong repository để tránh N+1.
+1. **API gửi Command/Query qua `ISender`** — không gọi service/repository trực tiếp.
+2. **Handler mỏng**: chỉ map + gọi Domain Service. Business rule thật ở Domain.
+3. **Một feature = một file**: command/query + handler + validator chung 1 `.cs`.
+4. **Validation = pipeline behavior** (`ValidationBehavior`), một chỗ cho mọi request → 400.
+5. **CQRS**: Command (ghi, trả aggregate) và Query (đọc, trả read-model) tách bạch, gọi xuống
+   `I*WriteService`/`I*ReadService` tương ứng.
+6. **Read-model**: ghi qua aggregate, đọc trả `*View` phẳng; SQL JOIN ở DB, Mongo ghép bộ nhớ.

@@ -4,7 +4,7 @@ using SellingNewProduct.Domain.Payments;
 namespace SellingNewProduct.Domain.Queries;
 
 /// <summary>
-/// Input for <c>IPaymentService.SearchAsync</c>: all payment-list filters plus paging and
+/// Input for <c>IPaymentWriteService.SearchAsync</c>: all payment-list filters plus paging and
 /// sorting. All filters are optional (null = no filter). The date range is on the created
 /// date. <c>SortBy</c> accepts <c>date</c> (default, newest first) or <c>amount</c>.
 /// </summary>

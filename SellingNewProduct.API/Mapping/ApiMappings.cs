@@ -1,6 +1,12 @@
 using SellingNewProduct.API.Contracts;
+using SellingNewProduct.Application.Categories;
+using SellingNewProduct.Application.Customers;
+using SellingNewProduct.Application.Employees;
+using SellingNewProduct.Application.Orders;
+using SellingNewProduct.Application.Payments;
+using SellingNewProduct.Application.Products;
+using SellingNewProduct.Application.Users;
 using SellingNewProduct.Domain.Categories;
-using SellingNewProduct.Domain.Commands;
 using SellingNewProduct.Domain.Customers;
 using SellingNewProduct.Domain.Employees;
 using SellingNewProduct.Domain.Orders;

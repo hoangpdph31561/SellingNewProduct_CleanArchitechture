@@ -3,14 +3,17 @@
 > **File này là NGUỒN SỰ THẬT để tiếp tục công việc.**
 > Mở chat mới → bảo Claude đọc file này trước. Sau mỗi bước hoàn thành, tick `[x]`.
 
-Cập nhật lần cuối: 2026-06-17
-Trạng thái tổng thể: **Phase 1-5 + 7 + 9 + 10 XONG. Toàn solution build pass (0 error, 0 warning). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test) + cân nhắc Unit of Work.**
+Cập nhật lần cuối: 2026-06-22
+Trạng thái tổng thể: **Phase 1-5 + 7 + 9 + 10 + 11 XONG. Toàn solution build pass (0 error, 0 warning). Còn lại: Phase 6 (user tự chạy demo SQL↔Mongo, seed, unit test).**
 
-> ⚠️ **Cập nhật kiến trúc (2026-06-17) — xem Phase 10 cuối file:** Đã **bỏ HẲN cổng `I*Queries`**: read side
-> gộp vào `I*Service` + `I*Repository` (repository trả read-model); API mỗi module chỉ một cổng `I*Service`.
-> Thêm nghiệp vụ thật (trừ/hoàn kho, SKU duy nhất, luật thanh toán), `POST /api/orders` đặt cả đơn 1 call,
-> và **validation chạy tự động qua action filter** (controller không inject validator). Vẫn **3 tầng**:
-> API · Domain · Infrastructure. Mô tả "Application"/"5 project"/"`I*Queries`" ở Phase 7-9 là LỊCH SỬ.
+> ⚠️ **Cập nhật kiến trúc (2026-06-22) — xem Phase 11 cuối file (MỚI NHẤT):** Đã **tái lập tầng
+> `Application` (CQRS/MediatR)**: API gửi Command/Query qua `ISender`; handler mỏng gọi Domain Service.
+> Domain Service & repository **tách Read/Write** (`I*ReadService`/`I*WriteService`,
+> `I*ReadRepository`/`I*WriteRepository`) trong `Interfaces/Inbound` + `Interfaces/Outbound`. Thêm
+> **`IUnitOfWork`** (Confirm/Cancel ghi 2 aggregate atomic; Mongo cần replica set). Validation chuyển sang
+> **`ValidationBehavior`** (MediatR pipeline). Mỗi feature gói **1 file** (command/query + handler +
+> validator). Kiến trúc hiện tại: **4 tầng** API · Application · Domain · Infrastructure.
+> Mô tả "3 tầng"/"action filter"/"`I*Service` gộp read+write" ở Phase 9-10 là LỊCH SỬ.
 
 ---
 
@@ -85,10 +88,9 @@ Trạng thái tổng thể: **Phase 1-5 + 7 + 9 + 10 XONG. Toàn solution build 
 3. `POST /api/users` → userId
 4. `POST /api/employees` (dùng userId) → employeeId
 5. `POST /api/customers` → customerId
-6. `POST /api/orders` (customerId, employeeId) → orderId (Draft)
-7. `POST /api/orders/{orderId}/details` (productId, quantity) → thêm dòng
-8. `POST /api/orders/{orderId}/confirm` → Confirmed (chặn nếu rỗng)
-9. `POST /api/payments` (orderId, amount) rồi `POST /api/payments/{id}/complete`
+6. `POST /api/orders` (customerId, employeeId, **kèm toàn bộ Items**) → orderId (Draft) — đặt cả đơn 1 call
+7. `POST /api/orders/{orderId}/confirm` → Confirmed (chặn nếu rỗng; trừ kho atomic qua UnitOfWork)
+8. `POST /api/payments` (orderId, amount) rồi `POST /api/payments/{id}/complete`
 
 ### Lệnh chạy
 ```
@@ -186,8 +188,29 @@ dotnet run --project SellingNewProduct.API
 - [x] `dotnet build` PASS (0 error, 0 warning). Docs cập nhật (ARCHITECTURE, CONVENTIONS, DOMAIN_MODEL, code/01,04,05,06, README index).
 - **Ghi chú còn yếu:** Confirm/Cancel ghi 2 repo (Product + Order) = 2 SaveChanges → nên gói 1 transaction/UoW (xem câu hỏi mở).
 
+## Phase 11 — Tái lập Application (CQRS/MediatR) + tách Read/Write + Unit of Work ✅ (2026-06-22)
+> Theo yêu cầu user: thêm tầng Application với MediatR; tách rõ đọc/ghi; gói transaction cho Confirm/Cancel.
+- [x] **Tạo lại project `SellingNewProduct.Application`** (ref Domain; packages MediatR, FluentValidation).
+      API ref Application; controller bỏ inject `I*Service`, chỉ inject **`ISender`** gửi Command/Query.
+- [x] **CQRS per feature**: mỗi use-case `*Command`/`*Query` (`IRequest<T>`) + `*Handler` (mỏng, gọi Domain
+      Service) + `*Validator`. Handler không chứa business, không gọi repository.
+- [x] **`ValidationBehavior<,>`** (MediatR `IPipelineBehavior`) thay action filter: validate request trước
+      handler → `ValidationException` → 400. Validator dời từ API sang Application.
+- [x] **Tách Domain Service Read/Write**: `I*ReadService`/`I*WriteService` (`Interfaces/Inbound`),
+      `*ReadService`/`*WriteService` (`Services/`). Reports chỉ có read.
+- [x] **Tách repository Read/Write**: `I*ReadRepository`/`I*WriteRepository` (`Interfaces/Outbound`); Infra
+      tách `Repositories/Read` + `Repositories/Write` cho cả SQL & Mongo.
+- [x] **`IUnitOfWork`** (`Interfaces/Outbound`) + `SqlServerUnitOfWork`/`MongoUnitOfWork`. `OrderWriteService`
+      gói trừ/hoàn kho + cập nhật Order trong 1 transaction. Mongo cần **replica set**
+      (`docker-compose.mongo-rs.yml` + `docs/mongo-replica-set.md`).
+- [x] **`AddApplicationServices()`** (MediatR + ValidationBehavior + validators, gọi luôn `AddDomainServices()`);
+      `Program.cs` gọi `AddApplicationServices()`.
+- [x] **Gộp file**: command/query + handler + validator của mỗi feature gói chung 1 `.cs`.
+- [x] `dotnet build` PASS (0 error, 0 warning). **Docs cập nhật toàn bộ** (README, ARCHITECTURE, CONVENTIONS,
+      DOMAIN_MODEL, code/01-06, code/README).
+
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
-- [ ] Có cần Unit of Work / transaction rõ ràng không? (mặc định: SaveChanges per repo) — **đã thành cấp thiết** sau Phase 10 (Confirm/Cancel đụng 2 repo).
+- [x] ~~Có cần Unit of Work / transaction rõ ràng không?~~ → **ĐÃ LÀM** ở Phase 11 (`IUnitOfWork`).
 - [ ] Seed dữ liệu mẫu để demo nhanh? (đề xuất: có)
 - [ ] `Payment` là aggregate riêng hay con của `Order`? (mặc định: aggregate riêng, ref OrderId)
 - [ ] Có làm authentication thật cho `User` không, hay chỉ lưu bảng? (mặc định: chỉ lưu bảng, chưa auth)

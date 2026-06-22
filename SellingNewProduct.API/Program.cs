@@ -1,14 +1,14 @@
 using SellingNewProduct.API;
 using SellingNewProduct.API.Middleware;
-using SellingNewProduct.Domain;
+using SellingNewProduct.Application;
 using SellingNewProduct.Infrastructure.MongoDB;
 using SellingNewProduct.Infrastructure.SqlServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Each layer registers its own services through a dedicated extension:
-builder.Services.AddApiServices();      // presentation: controllers, filter, OpenAPI, validators, hasher
-builder.Services.AddDomainServices();   // business logic services (API calls these, never repositories)
+builder.Services.AddApiServices();          // presentation: controllers, result filter, OpenAPI, hasher
+builder.Services.AddApplicationServices();  // CQRS handlers + MediatR + validation pipeline (API sends via ISender)
 
 // Composition root: pick ONE database implementation. This is the only place
 // in the whole solution that knows which database is in use. The domain and

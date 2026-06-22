@@ -4,7 +4,7 @@ using SellingNewProduct.Domain.Orders;
 namespace SellingNewProduct.Domain.Queries;
 
 /// <summary>
-/// Input for <c>IOrderService.SearchAsync</c>: all order-list filters plus paging and sorting
+/// Input for <c>IOrderWriteService.SearchAsync</c>: all order-list filters plus paging and sorting
 /// in one object. All filters are optional (null = no filter). <c>SortBy</c> accepts
 /// <c>orderDate</c> (default, newest first), <c>totalAmount</c>, <c>customerName</c> or
 /// <c>employeeName</c>.

@@ -10,7 +10,7 @@ Bối cảnh: cửa hàng **bán quần áo**. 8 bảng, nhóm theo aggregate.
 | **Value Object** | Không Id, so sánh theo giá trị, bất biến | `Money`, `Email`, `Address`, `Sku` |
 | **Aggregate Root** | Cổng vào duy nhất để thao tác một cụm entity | `Order` (chứa `OrderDetail`) |
 | **Domain Event** | Việc nghiệp vụ đã xảy ra | `OrderConfirmedEvent` |
-| **Repository (interface)** | Hợp đồng lưu/đọc aggregate (kể cả truy vấn báo cáo) | `IOrderRepository` |
+| **Repository (interface)** | Hợp đồng lưu/đọc aggregate, tách read/write (CQRS) | `IOrderWriteRepository`, `IOrderReadRepository` |
 | **Domain Exception** | Vi phạm quy tắc nghiệp vụ | `DomainException` |
 
 > **Quy tắc aggregate quan trọng:** tham chiếu giữa các aggregate **CHỈ bằng Id**, không bằng
@@ -112,25 +112,29 @@ OrderDetail : BaseEntity<Guid>   (con, KHÔNG có repository riêng)
 Giá sản phẩm đổi sau khi khách đặt. Đơn phải giữ giá **tại thời điểm đặt** → `OrderDetail`
 copy `UnitPrice`/`ProductName` thay vì tham chiếu `Product` hiện tại (chống rò rỉ giữa aggregate).
 
-## 6. Repository interfaces (Domain/Repositories)
+## 6. Outbound ports (Domain/Interfaces/Outbound)
 
-Mỗi aggregate root một repository. Read side **đã gộp vào repository**: ngoài các method ghi (trả
-aggregate), repository còn có method đọc trả **read-model** (`*View`, `PagedResult<T>`) cho danh sách/
-báo cáo. Riêng báo cáo xuyên nhiều bảng có `IReportRepository` (không gắn aggregate). (Trước đây từng
-tách cổng `I*Queries` riêng — nay gộp lại để mỗi module một cổng `I*Service`→`I*Repository`.)
+Theo CQRS, mỗi aggregate có **hai** repository tách biệt: `I*WriteRepository` (trả/nhận aggregate) và
+`I*ReadRepository` (trả read-model `*View`/`PagedResult<T>`). Báo cáo xuyên nhiều bảng chỉ có
+`IReportReadRepository`. Ngoài ra có **`IUnitOfWork`** (gói nhiều write vào 1 transaction) và
+**`IPasswordHasher`** (API implement).
 
 ```csharp
-public interface IOrderRepository
+public interface IOrderWriteRepository      // phía GHI — trả aggregate
 {
     Task<Order?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default);
-    Task<IReadOnlyList<Order>> GetByCustomerAsync(Guid theCustomerId, CancellationToken theCancellationToken = default);
-    Task<IReadOnlyList<Order>> GetByDateRangeAsync(DateTime theFrom, DateTime theTo, CancellationToken theCancellationToken = default); // báo cáo
     Task AddAsync(Order theOrder, CancellationToken theCancellationToken = default);
     Task UpdateAsync(Order theOrder, CancellationToken theCancellationToken = default);
 }
+
+public interface IOrderReadRepository       // phía ĐỌC — trả read-model
+{
+    Task<OrderDetailView?> GetOrderDetailAsync(Guid theId, CancellationToken theCancellationToken = default);
+    Task<PagedResult<OrderSummaryView>> SearchAsync(OrderSearchQuery theQuery, CancellationToken theCancellationToken = default);
+    // ... GetCustomerHistoryAsync, GetStatusBreakdownAsync
+}
 ```
-(Tương tự: `IUserRepository`, `ICustomerRepository`, `IEmployeeRepository`,
-`ICategoryRepository`, `IProductRepository`, `IPaymentRepository`.)
+(Tương tự cho User/Customer/Employee/Category/Product/Payment.)
 
 > `Order` luôn được nạp đầy đủ kèm `Details` (load cả cụm aggregate) cho phần ghi; phần đọc/báo cáo
 > dùng read-model phẳng (JOIN/GROUP BY) trả về trực tiếp, không nạp aggregate.

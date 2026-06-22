@@ -3,7 +3,7 @@ using SellingNewProduct.Domain.Common;
 namespace SellingNewProduct.Domain.Queries;
 
 /// <summary>
-/// Input for <c>IEmployeeService.SearchAsync</c>: all employee-list filters plus paging and
+/// Input for <c>IEmployeeWriteService.SearchAsync</c>: all employee-list filters plus paging and
 /// sorting. All filters are optional (null = no filter). <c>SortBy</c> accepts <c>name</c>
 /// (default), <c>position</c> or <c>hiredate</c>.
 /// </summary>

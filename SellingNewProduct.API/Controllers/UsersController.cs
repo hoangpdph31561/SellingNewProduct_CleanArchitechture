@@ -1,7 +1,8 @@
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.API.Contracts;
 using SellingNewProduct.API.Mapping;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Application.Users;
 
 namespace SellingNewProduct.API.Controllers;
 
@@ -9,32 +10,31 @@ namespace SellingNewProduct.API.Controllers;
 [Route("api/[controller]")]
 public sealed class UsersController : ControllerBase
 {
-    private readonly IUserService myUserService;
+    private readonly ISender mySender;
 
-    public UsersController(IUserService theUserService)
+    public UsersController(ISender theSender)
     {
-        myUserService = theUserService;
+        mySender = theSender;
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<UserResponse>>> GetAll(CancellationToken theCancellationToken)
     {
-        var aUsers = await myUserService.GetAllAsync(theCancellationToken);
+        var aUsers = await mySender.Send(new GetAllUsersQuery(), theCancellationToken);
         return Ok(aUsers.Select(u => u.ToResponse()).ToList());
     }
 
     [HttpGet("{theId:guid}")]
     public async Task<ActionResult<UserResponse>> GetById(Guid theId, CancellationToken theCancellationToken)
     {
-        var aUser = await myUserService.GetByIdAsync(theId, theCancellationToken);
+        var aUser = await mySender.Send(new GetUserByIdQuery(theId), theCancellationToken);
         return aUser is null ? NotFound() : Ok(aUser.ToResponse());
     }
 
     [HttpPost]
     public async Task<ActionResult<UserResponse>> Create(CreateUserRequest theRequest, CancellationToken theCancellationToken)
     {
-        var aUser = await myUserService.CreateAsync(theRequest.ToCommand(), theCancellationToken);
-
+        var aUser = await mySender.Send(theRequest.ToCommand(), theCancellationToken);
         return CreatedAtAction(nameof(GetById), new { theId = aUser.Id }, aUser.ToResponse());
     }
 }

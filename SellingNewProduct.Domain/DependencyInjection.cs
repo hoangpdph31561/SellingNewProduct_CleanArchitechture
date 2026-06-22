@@ -1,25 +1,39 @@
 using Microsoft.Extensions.DependencyInjection;
-using SellingNewProduct.Domain.Abstractions;
+using SellingNewProduct.Domain.Interfaces.Inbound;
 using SellingNewProduct.Domain.Services;
 
 namespace SellingNewProduct.Domain;
 
 /// <summary>
-/// Registers the domain services. This lets implementations (e.g. <c>CategoryService</c>)
-/// stay <c>internal</c> while the API still consumes them through their interfaces.
+/// Composition for the Domain layer. Binds each inbound (driving) port to its Domain service
+/// implementation. Command services hold the business rules that span more than one aggregate;
+/// query services forward reads to the read repositories. Both kinds depend only on outbound
+/// ports (repositories, unit of work, password hasher), so the core carries no MediatR or
+/// infrastructure dependency. Scoped to match those outbound ports.
 /// </summary>
 public static class DependencyInjection
 {
     public static IServiceCollection AddDomainServices(this IServiceCollection theServices)
     {
-        theServices.AddScoped<ICategoryService, CategoryService>();
-        theServices.AddScoped<IProductService, ProductService>();
-        theServices.AddScoped<ICustomerService, CustomerService>();
-        theServices.AddScoped<IEmployeeService, EmployeeService>();
-        theServices.AddScoped<IOrderService, OrderService>();
-        theServices.AddScoped<IPaymentService, PaymentService>();
-        theServices.AddScoped<IUserService, UserService>();
-        theServices.AddScoped<IReportService, ReportService>();
+        // Command (write) inbound ports.
+        theServices.AddScoped<IOrderWriteService, OrderWriteService>();
+        theServices.AddScoped<IPaymentWriteService, PaymentWriteService>();
+        theServices.AddScoped<IProductWriteService, ProductWriteService>();
+        theServices.AddScoped<ICategoryWriteService, CategoryWriteService>();
+        theServices.AddScoped<IUserWriteService, UserWriteService>();
+        theServices.AddScoped<ICustomerWriteService, CustomerWriteService>();
+        theServices.AddScoped<IEmployeeWriteService, EmployeeWriteService>();
+
+        // Query (read) inbound ports.
+        theServices.AddScoped<ICategoryReadService, CategoryReadService>();
+        theServices.AddScoped<ICustomerReadService, CustomerReadService>();
+        theServices.AddScoped<IEmployeeReadService, EmployeeReadService>();
+        theServices.AddScoped<IOrderReadService, OrderReadService>();
+        theServices.AddScoped<IPaymentReadService, PaymentReadService>();
+        theServices.AddScoped<IProductReadService, ProductReadService>();
+        theServices.AddScoped<IReportReadService, ReportReadService>();
+        theServices.AddScoped<IUserReadService, UserReadService>();
+
         return theServices;
     }
 }

@@ -1,0 +1,54 @@
+# Local MongoDB as a single-node REPLICA SET (rs0).
+#
+# Why a replica set and not a plain `mongod`? MongoDB only allows multi-document
+# transactions on a replica set (or a sharded cluster). The order-confirm/cancel flow
+# uses IUnitOfWork -> a Mongo transaction, so the server MUST run as a replica set.
+#
+# Usage:
+#   docker compose -f docker-compose.mongo-rs.yml up -d
+# The `mongo-init` one-shot container runs rs.initiate() once the node is up; it then exits.
+# App connection string (already set in appsettings.json):
+#   mongodb://localhost:27017/?replicaSet=rs0&readPreference=primary
+#
+# A 3-node setup (true high availability) is described in docs/mongo-replica-set.md.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: snp-mongo
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Healthy only after the node answers a ping.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo-init:
+    image: mongo:7
+    container_name: snp-mongo-init
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    # Initiate the replica set once. The member host is "localhost:27017" so that an app
+    # running on the host machine (outside Docker) can reach the advertised primary.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        mongosh --host mongo:27017 --quiet --eval '
+          try {
+            rs.status();
+            print("Replica set already initiated.");
+          } catch (e) {
+            rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "localhost:27017" }] });
+            print("Replica set rs0 initiated.");
+          }'
+
+volumes:
+  mongo-data:

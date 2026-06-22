@@ -7,10 +7,10 @@ vào phía ĐỌC — và vì sao mỗi tính năng lại đặt ở đúng tầ
 > 💡 Luận điểm xuyên suốt vẫn không đổi: **một hợp đồng (interface) duy nhất, hai cách thực thi**
 > (SQL đẩy xuống DB; Mongo làm phần còn lại trong bộ nhớ). Phân trang/lọc/sort là *cách đọc* (read side).
 >
-> ⚠️ **Cập nhật:** read side **đã gộp vào `I*Service` + `I*Repository`** (không còn cổng `I*Queries`).
-> Hợp đồng (`PagedResult<T>`, `PageRequest`, `*SearchQuery`, read-model) nằm trong **Domain**; method
-> `SearchAsync` đứng trên `I*Service` rồi delegate xuống `I*Repository` (repository trả read-model). Cách
-> thực thi vẫn ở **Infrastructure** (trong `Repositories/`, không còn folder `Queries/`).
+> ⚠️ **Vị trí code:** hợp đồng (`PagedResult<T>`, `PageRequest`, `*SearchQuery`, read-model) nằm trong
+> **Domain**; method `SearchAsync` đứng trên `I*ReadService` rồi delegate xuống `I*ReadRepository`
+> (repository read trả read-model). API gửi `Search*Query` (Application) qua `ISender`; handler bọc
+> `*SearchQuery` rồi gọi read service. Cách thực thi ở **Infrastructure** (`Repositories/Read/`).
 
 ---
 
@@ -114,17 +114,17 @@ public sealed record ProductSearchQuery
     public bool SortDescending { get; init; }
 }
 
-// Khai báo trên CẢ IProductService (API gọi) lẫn IProductRepository (thực thi):
+// Khai báo trên CẢ IProductReadService (Domain inbound) lẫn IProductReadRepository (thực thi):
 Task<PagedResult<ProductSummaryView>> SearchAsync(ProductSearchQuery theQuery, CancellationToken ct = default);
 ```
 
-Controller bind thẳng từ query-string (không cần liệt kê từng `[FromQuery]`):
+Controller bind thẳng từ query-string rồi gửi query qua `ISender`:
 
 ```csharp
 [HttpGet("search")]
 public async Task<ActionResult<PagedResult<ProductSummaryView>>> Search(
     [FromQuery] ProductSearchQuery theQuery, CancellationToken ct)
-    => Ok(await myProductService.SearchAsync(theQuery, ct));   // service → repository
+    => Ok(await mySender.Send(new SearchProductsQuery(theQuery), ct));  // Handler → IProductReadService → repository
 ```
 
 > 💡 ASP.NET bind theo **tên property** (PascalCase) → query-string là `?Name=ao&Page=2&SortBy=price`.
@@ -204,7 +204,7 @@ aQuery = (theQuery.SortBy?.Trim().ToLowerInvariant()) switch
 
 ## F. SQL vs Mongo — CÙNG hợp đồng, KHÁC cách chạy
 
-Đây là phần học cốt lõi. Cùng method `SearchAsync` (trên `I*Repository`), nhưng:
+Đây là phần học cốt lõi. Cùng method `SearchAsync` (trên `I*ReadRepository`), nhưng:
 
 ### SQL Server — đẩy HẾT xuống database
 `WHERE` + `ORDER BY` + `COUNT(*)` + `OFFSET/FETCH` đều do EF Core dịch và chạy trên DB. App chỉ nhận
@@ -281,8 +281,8 @@ GET /api/orders?CustomerName=an&Status=Confirmed&SortBy=totalAmount&SortDescendi
 ## H. Nguyên tắc rút ra (ghi nhớ)
 
 1. **Phân trang/lọc/sort là *cách đọc*, không phải business** → hợp đồng ở Domain (`SearchAsync` trên
-   `I*Service`/`I*Repository`), cách thực thi ở Infrastructure. (Trước: tách ở Application, rồi tách cổng
-   `I*Queries`; nay gộp hẳn vào Service+Repository — một cổng mỗi module.)
+   `I*ReadService`/`I*ReadRepository`), cách thực thi ở Infrastructure (`Repositories/Read/`); API gửi
+   `Search*Query` qua MediatR (`ISender`).
 2. **Luôn trả `TotalCount`** cùng dữ liệu trang — thiếu nó UI không phân trang được.
 3. **Kẹp (clamp) input một chỗ** (`PageRequest`): chặn page 0 và pageSize khổng lồ.
 4. **Whitelist cột sort** — không dịch thẳng chuỗi người dùng thành cột.
