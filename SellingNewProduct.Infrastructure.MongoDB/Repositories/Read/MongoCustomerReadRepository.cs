@@ -20,16 +20,16 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoCustomerReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoCustomerReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<Customer?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Customers
+        var aDocument = await myMongoReadDbContext.Customers
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -38,7 +38,7 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
 
     public async Task<IReadOnlyList<Customer>> GetAllAsync(CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Customers
+        var aDocuments = await myMongoReadDbContext.Customers
             .AsNoTracking()
             .Where(r => r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
@@ -48,7 +48,7 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
 
     public async Task<CustomerSummaryView?> GetSummaryByIdAsync(Guid theCustomerId, CancellationToken theCancellationToken = default)
     {
-        var aCustomer = await myMongoAppDbContext.Customers.AsNoTracking()
+        var aCustomer = await myMongoReadDbContext.Customers.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == theCustomerId && c.Status != DeletedStatus, theCancellationToken);
 
         return aCustomer is null ? null : ToSummary(aCustomer);
@@ -60,7 +60,7 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
     {
         var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
-        var aQuery = myMongoAppDbContext.Customers.AsNoTracking()
+        var aQuery = myMongoReadDbContext.Customers.AsNoTracking()
             .Where(c => c.Status != DeletedStatus);
 
         if (theQuery.Status is not null)
@@ -122,7 +122,7 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
     {
         var aPage = new PageRequest(thePage, thePageSize);
 
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
             .ToListAsync(theCancellationToken);
@@ -147,7 +147,7 @@ internal sealed class MongoCustomerReadRepository : ICustomerReadRepository
             .ToList();
 
         var aCustomerIds = aPageRows.Select(x => x.CustomerId).Distinct().ToList();
-        var aNameById = (await myMongoAppDbContext.Customers.AsNoTracking()
+        var aNameById = (await myMongoReadDbContext.Customers.AsNoTracking()
             .Where(c => aCustomerIds.Contains(c.Id))
             .ToListAsync(theCancellationToken))
             .ToDictionary(c => c.Id, c => c.FullName);

@@ -19,16 +19,16 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoProductReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoProductReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<Product?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Products
+        var aDocument = await myMongoReadDbContext.Products
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -37,7 +37,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
 
     public async Task<IReadOnlyList<Product>> GetAllAsync(CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Products
+        var aDocuments = await myMongoReadDbContext.Products
             .AsNoTracking()
             .Where(r => r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
@@ -47,7 +47,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
 
     public async Task<IReadOnlyList<Product>> GetByCategoryAsync(Guid theCategoryId, CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Products
+        var aDocuments = await myMongoReadDbContext.Products
             .AsNoTracking()
             .Where(r => r.CategoryId == theCategoryId && r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
@@ -57,7 +57,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
 
     public async Task<ProductSummaryView?> GetSummaryByIdAsync(Guid theProductId, CancellationToken theCancellationToken = default)
     {
-        var aProduct = await myMongoAppDbContext.Products.AsNoTracking()
+        var aProduct = await myMongoReadDbContext.Products.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == theProductId && p.Status != DeletedStatus, theCancellationToken);
 
         if (aProduct is null)
@@ -66,7 +66,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
         }
 
         // No JOIN — look up the category name by id (the stitch).
-        var aCategory = await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategory = await myMongoReadDbContext.Categories.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == aProduct.CategoryId, theCancellationToken);
 
         return new ProductSummaryView(
@@ -89,7 +89,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
     {
         var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
-        var aQuery = myMongoAppDbContext.Products.AsNoTracking()
+        var aQuery = myMongoReadDbContext.Products.AsNoTracking()
             .Where(p => p.Status != DeletedStatus);
 
         if (theQuery.CategoryId is not null)
@@ -149,7 +149,7 @@ internal sealed class MongoProductReadRepository : IProductReadRepository
             .ToList();
 
         var aCategoryIds = aPageDocs.Select(p => p.CategoryId).Distinct().ToList();
-        var aCategoryNameById = (await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategoryNameById = (await myMongoReadDbContext.Categories.AsNoTracking()
             .Where(c => aCategoryIds.Contains(c.Id))
             .ToListAsync(theCancellationToken))
             .ToDictionary(c => c.Id, c => c.Name);

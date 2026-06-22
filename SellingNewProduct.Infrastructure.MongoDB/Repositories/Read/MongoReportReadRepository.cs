@@ -17,11 +17,11 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoReportReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoReportReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<PagedResult<BestSellingProductView>> GetBestSellingProductsAsync(
@@ -31,14 +31,14 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
     {
         var aPage = new PageRequest(thePage, thePageSize);
 
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
             .ToListAsync(theCancellationToken);
 
-        var aProducts = await myMongoAppDbContext.Products.AsNoTracking()
+        var aProducts = await myMongoReadDbContext.Products.AsNoTracking()
             .ToListAsync(theCancellationToken);
-        var aCategories = await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategories = await myMongoReadDbContext.Categories.AsNoTracking()
             .ToListAsync(theCancellationToken);
 
         var aCategoryNameById = aCategories.ToDictionary(c => c.Id, c => c.Name);
@@ -74,12 +74,12 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
 
     public async Task<IReadOnlyList<EmployeeSalesView>> GetEmployeeSalesLeaderboardAsync(CancellationToken theCancellationToken = default)
     {
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
             .ToListAsync(theCancellationToken);
 
-        var aEmployees = await myMongoAppDbContext.Employees.AsNoTracking()
+        var aEmployees = await myMongoReadDbContext.Employees.AsNoTracking()
             .ToListAsync(theCancellationToken);
         var aEmployeeById = aEmployees.ToDictionary(e => e.Id);
 
@@ -101,13 +101,13 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
 
     public async Task<IReadOnlyList<CategorySalesView>> GetSalesByCategoryAsync(CancellationToken theCancellationToken = default)
     {
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
             .ToListAsync(theCancellationToken);
 
-        var aProducts = await myMongoAppDbContext.Products.AsNoTracking().ToListAsync(theCancellationToken);
-        var aCategories = await myMongoAppDbContext.Categories.AsNoTracking().ToListAsync(theCancellationToken);
+        var aProducts = await myMongoReadDbContext.Products.AsNoTracking().ToListAsync(theCancellationToken);
+        var aCategories = await myMongoReadDbContext.Categories.AsNoTracking().ToListAsync(theCancellationToken);
 
         var aProductById = aProducts.ToDictionary(p => p.Id);
         var aCategoryById = aCategories.ToDictionary(c => c.Id);
@@ -139,7 +139,7 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
         DateTime? theToUtc = null,
         CancellationToken theCancellationToken = default)
     {
-        var aQuery = myMongoAppDbContext.Orders.AsNoTracking()
+        var aQuery = myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped));
 
@@ -170,7 +170,7 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
     {
         var aPage = new PageRequest(thePage, thePageSize);
 
-        var aProducts = await myMongoAppDbContext.Products.AsNoTracking()
+        var aProducts = await myMongoReadDbContext.Products.AsNoTracking()
             .Where(p => p.Status != DeletedStatus && p.StockQuantity <= theThreshold)
             .ToListAsync(theCancellationToken);
 
@@ -183,7 +183,7 @@ internal sealed class MongoReportReadRepository : IReportReadRepository
             .ToList();
 
         var aCategoryIds = aPageDocs.Select(p => p.CategoryId).Distinct().ToList();
-        var aCategoryNameById = (await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategoryNameById = (await myMongoReadDbContext.Categories.AsNoTracking()
             .Where(c => aCategoryIds.Contains(c.Id))
             .ToListAsync(theCancellationToken))
             .ToDictionary(c => c.Id, c => c.Name);

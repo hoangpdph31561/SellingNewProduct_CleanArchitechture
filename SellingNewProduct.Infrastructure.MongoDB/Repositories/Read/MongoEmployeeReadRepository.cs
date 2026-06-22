@@ -19,16 +19,16 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoEmployeeReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoEmployeeReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<Employee?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Employees
+        var aDocument = await myMongoReadDbContext.Employees
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -37,7 +37,7 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
 
     public async Task<IReadOnlyList<Employee>> GetAllAsync(CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Employees
+        var aDocuments = await myMongoReadDbContext.Employees
             .AsNoTracking()
             .Where(r => r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
@@ -47,7 +47,7 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
 
     public async Task<EmployeeSummaryView?> GetSummaryByIdAsync(Guid theEmployeeId, CancellationToken theCancellationToken = default)
     {
-        var aEmployee = await myMongoAppDbContext.Employees.AsNoTracking()
+        var aEmployee = await myMongoReadDbContext.Employees.AsNoTracking()
             .FirstOrDefaultAsync(e => e.Id == theEmployeeId && e.Status != DeletedStatus, theCancellationToken);
 
         if (aEmployee is null)
@@ -55,7 +55,7 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
             return null;
         }
 
-        var aOrderCount = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrderCount = await myMongoReadDbContext.Orders.AsNoTracking()
             .CountAsync(o => o.EmployeeId == theEmployeeId && o.Status != DeletedStatus &&
                              (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped),
                         theCancellationToken);
@@ -69,7 +69,7 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
     {
         var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
-        var aQuery = myMongoAppDbContext.Employees.AsNoTracking()
+        var aQuery = myMongoReadDbContext.Employees.AsNoTracking()
             .Where(e => e.Status != DeletedStatus);
 
         if (theQuery.Status is not null)
@@ -109,7 +109,7 @@ internal sealed class MongoEmployeeReadRepository : IEmployeeReadRepository
             .ToList();
 
         var aEmployeeIds = aPageDocs.Select(e => e.Id).ToList();
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped) &&
                         aEmployeeIds.Contains(o.EmployeeId))

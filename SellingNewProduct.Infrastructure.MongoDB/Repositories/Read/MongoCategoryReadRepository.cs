@@ -19,16 +19,16 @@ internal sealed class MongoCategoryReadRepository : ICategoryReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoCategoryReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoCategoryReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<Category?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Categories
+        var aDocument = await myMongoReadDbContext.Categories
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -37,7 +37,7 @@ internal sealed class MongoCategoryReadRepository : ICategoryReadRepository
 
     public async Task<IReadOnlyList<Category>> GetAllAsync(CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Categories
+        var aDocuments = await myMongoReadDbContext.Categories
             .AsNoTracking()
             .Where(r => r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
@@ -47,7 +47,7 @@ internal sealed class MongoCategoryReadRepository : ICategoryReadRepository
 
     public async Task<IReadOnlyList<CategorySummaryView>> GetCategorySummariesAsync(CancellationToken theCancellationToken = default)
     {
-        var aCategories = await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategories = await myMongoReadDbContext.Categories.AsNoTracking()
             .Where(c => c.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
 
@@ -65,7 +65,7 @@ internal sealed class MongoCategoryReadRepository : ICategoryReadRepository
     {
         var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
-        var aCategories = await myMongoAppDbContext.Categories.AsNoTracking()
+        var aCategories = await myMongoReadDbContext.Categories.AsNoTracking()
             .Where(c => c.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
 
@@ -94,7 +94,7 @@ internal sealed class MongoCategoryReadRepository : ICategoryReadRepository
 
     private async Task<Dictionary<Guid, (int Count, decimal StockValue)>> BuildProductStatsAsync(CancellationToken theCancellationToken)
     {
-        var aProducts = await myMongoAppDbContext.Products.AsNoTracking()
+        var aProducts = await myMongoReadDbContext.Products.AsNoTracking()
             .Where(p => p.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);
 

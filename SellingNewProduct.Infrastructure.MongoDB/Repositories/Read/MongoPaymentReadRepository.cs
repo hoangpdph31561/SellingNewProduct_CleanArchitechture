@@ -20,16 +20,16 @@ internal sealed class MongoPaymentReadRepository : IPaymentReadRepository
     private const int DeletedStatus = (int)EntityStatus.Deleted;
     private const int CompletedPayment = (int)PaymentStatus.Completed;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoPaymentReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoPaymentReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<Payment?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Payments
+        var aDocument = await myMongoReadDbContext.Payments
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -42,7 +42,7 @@ internal sealed class MongoPaymentReadRepository : IPaymentReadRepository
     {
         var aPage = new PageRequest(theQuery.Page, theQuery.PageSize);
 
-        var aQuery = myMongoAppDbContext.Payments.AsNoTracking()
+        var aQuery = myMongoReadDbContext.Payments.AsNoTracking()
             .Where(p => p.Status != DeletedStatus);
 
         if (theQuery.OrderId is not null)
@@ -106,12 +106,12 @@ internal sealed class MongoPaymentReadRepository : IPaymentReadRepository
     {
         var aPage = new PageRequest(thePage, thePageSize);
 
-        var aOrders = await myMongoAppDbContext.Orders.AsNoTracking()
+        var aOrders = await myMongoReadDbContext.Orders.AsNoTracking()
             .Where(o => o.Status != DeletedStatus &&
                         (o.OrderStatus == (int)OrderStatus.Confirmed || o.OrderStatus == (int)OrderStatus.Shipped))
             .ToListAsync(theCancellationToken);
 
-        var aPayments = await myMongoAppDbContext.Payments.AsNoTracking()
+        var aPayments = await myMongoReadDbContext.Payments.AsNoTracking()
             .Where(p => p.Status != DeletedStatus && p.PaymentStatus == CompletedPayment)
             .ToListAsync(theCancellationToken);
 
@@ -145,7 +145,7 @@ internal sealed class MongoPaymentReadRepository : IPaymentReadRepository
             .ToList();
 
         var aCustomerIds = aPageRows.Select(x => x.CustomerId).Distinct().ToList();
-        var aNameById = (await myMongoAppDbContext.Customers.AsNoTracking()
+        var aNameById = (await myMongoReadDbContext.Customers.AsNoTracking()
             .Where(c => aCustomerIds.Contains(c.Id))
             .ToListAsync(theCancellationToken))
             .ToDictionary(c => c.Id, c => c.FullName);

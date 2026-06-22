@@ -1,8 +1,9 @@
 # 03 — Infrastructure.MongoDB
 
-Tầng này hiện thực **đúng 7 interface repository** giống hệt bản SQL, nhưng lưu vào **MongoDB** (cũng
-qua EF Core, dùng provider `MongoDB.EntityFrameworkCore`). Cấu trúc song song với file 02, nên ở đây
-tôi nhấn mạnh **những chỗ KHÁC** — và chính sự khác đó là điều chứng minh "Domain độc lập DB".
+Tầng này hiện thực **đúng bộ port outbound** (các `I*WriteRepository`/`I*ReadRepository` +
+`IUnitOfWork`) giống hệt bản SQL, nhưng lưu vào **MongoDB** (cũng qua EF Core, dùng provider
+`MongoDB.EntityFrameworkCore`). Cấu trúc song song với file 02, nên ở đây tôi nhấn mạnh **những chỗ KHÁC**
+— và chính sự khác đó là điều chứng minh "Domain độc lập DB".
 
 > 💡 Điểm học lớn nhất: Domain entity, repository interface, mapper *signature* đều như nhau. Chỉ
 > phần lưu trữ đổi. Đổi DB = đổi tầng này + một dòng DI ở API.
@@ -50,9 +51,23 @@ Gom tất cả config vào **một file** (mỗi entity vẫn là một class `I
 
 ---
 
-## C. `Persistence/MongoAppDbContext.cs`
-Giống `AppDbContext` của SQL: các `DbSet<*Document>` + `OnModelCreating` gọi
-`ApplyConfigurationsFromAssembly`. Không cần `OnConfiguring` (không có query filter để chỉnh cảnh báo).
+## C. Persistence context — TÁCH write/read theo node
+
+Phần mapping (`DbSet<*Document>` + `OnModelCreating` gọi `ApplyConfigurationsFromAssembly`) gom vào
+`MongoDbContextBase`. Hai context dẫn xuất, **chỉ khác nhau ở connection string** (DI wiring), không
+khác model:
+
+| Context | Connection (`readPreference`) | Ai dùng |
+|---|---|---|
+| `MongoAppDbContext` | `MongoDB` → **primary** | Write repository + `MongoUnitOfWork` (ghi + transaction **bắt buộc** primary) |
+| `MongoReadDbContext` | `MongoDBRead` → **secondaryPreferred** | Read repository (`Repositories/Read/*`) — query đọc từ **secondary** trên cụm nhiều node |
+
+💡 Đây mới là phần "primary ghi / secondary đọc" thực sự (định tuyến vật lý), bổ sung cho việc tách
+interface read/write ở Domain. `MongoDBRead` là **tùy chọn**: thiếu thì DI fallback về connection
+primary (single-node / chạy SQL vẫn hoạt động bình thường).
+> ⚠️ Secondary có **replication lag** → đọc ngay sau ghi có thể ra dữ liệu cũ (eventual consistency).
+> Hợp cho list/report; không hợp "read-your-own-write". Chi tiết bật/tắt: [docs/mongo-replica-set.md](../../../docs/mongo-replica-set.md).
+Không cần `OnConfiguring` (không có query filter để chỉnh cảnh báo).
 
 ---
 
@@ -71,8 +86,9 @@ Cùng bộ 3 method như SQL, chỉ đổi `*Record` → `*Document`:
 
 ---
 
-## E. Repository — `Repositories/Mongo*Repository.cs`
-Giống bản SQL, nhưng vì **không có global query filter**, mỗi truy vấn đọc phải **tự lọc xóa mềm**:
+## E. Repository — `Repositories/Write/*` + `Repositories/Read/*`
+Tách Read/Write y như bản SQL (`Mongo*WriteRepository`/`Mongo*ReadRepository`), nhưng vì **không có global
+query filter**, mỗi truy vấn đọc phải **tự lọc xóa mềm**:
 ```csharp
 private const int DeletedStatus = (int)EntityStatus.Deleted;   // = 3
 ...
@@ -80,8 +96,19 @@ private const int DeletedStatus = (int)EntityStatus.Deleted;   // = 3
 ```
 - 💡 Cùng một mục tiêu "ẩn dữ liệu đã xóa", nhưng cách làm khác tầng SQL: SQL để EF tự lọc, Mongo lọc tay.
   Đây là ví dụ điển hình "chi tiết hạ tầng khác nhau, hợp đồng (interface) như nhau".
-- **`MongoOrderRepository`** — **không cần `.Include(Details)`** vì Details đã nằm sẵn trong document
-  (đọc document là có luôn). Đối lập với SQL phải Include bảng con.
+- **`MongoOrderWriteRepository`** — **không cần `.Include(Details)`** vì Details đã nằm sẵn trong document.
+- **Read repository** — không JOIN quan hệ → nạp document liên quan rồi **ghép (stitch) trong bộ nhớ** để
+  dựng `*View` (xem [05-Application.md](05-Application.md) §E).
+
+### `Persistence/MongoUnitOfWork.cs`
+Hiện thực `IUnitOfWork`: `BeginTransactionAsync` mở transaction trên `MongoAppDbContext.Database`.
+- ⚠️ MongoDB **chỉ cho phép multi-document transaction khi server chạy ở chế độ REPLICA SET** (hoặc
+  sharded cluster). Đứng standalone `mongod` → `BeginTransactionAsync` **throw**. Đây là lý do flow
+  `ConfirmAsync`/`CancelAsync` (ghi Product + Order atomic) cần replica set khi `DatabaseProvider=MongoDB`.
+- Dựng replica set local: [`docker-compose.mongo-rs.yml`](../../../docker-compose.mongo-rs.yml) + connection
+  string `...?replicaSet=rs0`. Chi tiết & 3-node: [`docs/mongo-replica-set.md`](../../../docs/mongo-replica-set.md).
+- 💡 Đây cũng là một khác biệt hạ tầng "lộ ra": SQL Server transaction chạy ngay trên instance bình thường,
+  Mongo cần cấu hình cụm — nhưng port `IUnitOfWork` mà Domain thấy thì y hệt.
 
 ---
 
@@ -89,11 +116,12 @@ private const int DeletedStatus = (int)EntityStatus.Deleted;   // = 3
 Extension method **`AddMongoInfrastructure(theServices, theConfiguration)`**:
 1. Đọc connection string `"MongoDB"` + tên database (`MongoDatabaseName`, mặc định `SellingNewProduct`).
 2. `AddDbContext<MongoAppDbContext>(o => o.UseMongoDB(connString, dbName))`.
-3. Đăng ký **đúng 7 interface giống bản SQL**, nhưng trỏ tới `Mongo*Repository`.
+3. Đăng ký **đúng bộ interface giống bản SQL** (mỗi aggregate một `I*WriteRepository` + `I*ReadRepository`,
+   `IReportReadRepository`, `IUnitOfWork`), nhưng trỏ tới các class `Mongo*`.
 
 💡 So sánh hai file `DependencyInjection`:
-- SQL đăng ký `IOrderRepository → SqlServerOrderRepository`.
-- Mongo đăng ký `IOrderRepository → MongoOrderRepository`.
+- SQL đăng ký `IOrderWriteRepository → SqlServerOrderWriteRepository`, `IUnitOfWork → SqlServerUnitOfWork`.
+- Mongo đăng ký `IOrderWriteRepository → MongoOrderWriteRepository`, `IUnitOfWork → MongoUnitOfWork`.
 
 Cùng một interface, hai implementation. API chọn bên nào tuỳ `DatabaseProvider`. **Đó là toàn bộ "phép
 màu" của Clean Architecture trong dự án này.**

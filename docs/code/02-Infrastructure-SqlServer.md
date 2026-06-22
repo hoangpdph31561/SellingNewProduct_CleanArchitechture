@@ -113,10 +113,13 @@ khi chỉ đang đọc dữ liệu có sẵn.
 
 ---
 
-## F. Repository — `Repositories/SqlServer*Repository.cs`
+## F. Repository — `Repositories/Write/*` + `Repositories/Read/*`
 
-Mỗi class `internal sealed` hiện thực một interface của Domain, nhận `AppDbContext` qua constructor
-(field `myAppDbContext`). Mẫu chung:
+Theo CQRS, repository tách **hai nhóm** (mỗi class `internal sealed`, nhận `AppDbContext` qua constructor):
+- `Repositories/Write/SqlServer*WriteRepository.cs` — hiện thực `I*WriteRepository` (trả/nhận aggregate).
+- `Repositories/Read/SqlServer*ReadRepository.cs` — hiện thực `I*ReadRepository` (đọc bằng JOIN, trả `*View`).
+
+Mẫu chung phía **ghi**:
 
 ```csharp
 // Đọc: AsNoTracking (không cần theo dõi) + map sang domain
@@ -136,9 +139,16 @@ await myAppDbContext.SaveChangesAsync(...);
 ```
 - 💡 `AsNoTracking()` khi đọc → nhanh hơn, vì không cần EF theo dõi thay đổi.
 - 💡 Khi sửa thì **không** dùng `AsNoTracking` (cần EF theo dõi để biết cột nào đổi).
-- **`SqlServerOrderRepository`** — khi đọc/sửa Order phải `.Include(r => r.Details)` để nạp kèm bảng con.
-  Các query `GetByCustomerAsync`, `GetByDateRangeAsync` phục vụ tra cứu.
+- **`SqlServerOrderWriteRepository`** — khi đọc/sửa Order phải `.Include(r => r.Details)` để nạp kèm bảng con.
+- **Read repository** (`Repositories/Read/`) dùng LINQ `join`/`group by` → EF dịch thành SQL JOIN/GROUP BY,
+  trả thẳng read-model `*View` (xem [05-Application.md](05-Application.md) §E và [06-Pagination-Search.md](06-Pagination-Search.md)).
 - Nhờ `HasQueryFilter`, các bản ghi đã xóa mềm **tự động bị loại** — repository không cần tự lọc.
+
+### `Persistence/SqlServerUnitOfWork.cs`
+Hiện thực `IUnitOfWork`: `BeginTransactionAsync` mở `AppDbContext.Database.BeginTransactionAsync()` và bọc
+trong `EfCoreUnitOfWorkTransaction` (adapt `IDbContextTransaction` sang hợp đồng Domain). Mọi write
+repository trong cùng scope dùng chung `AppDbContext`, nên các `SaveChanges` của chúng enlist vào transaction
+này và commit một lần — dùng cho `OrderWriteService.ConfirmAsync/CancelAsync` (ghi Product + Order atomic).
 
 ---
 
@@ -146,7 +156,8 @@ await myAppDbContext.SaveChangesAsync(...);
 Class `static` với extension method **`AddSqlServerInfrastructure(theServices, theConfiguration)`**:
 1. Đọc connection string `"SqlServer"` từ config (không có thì ném lỗi rõ ràng).
 2. `AddDbContext<AppDbContext>(o => o.UseSqlServer(...))`.
-3. Đăng ký 7 cặp `interface → implementation` dạng `AddScoped` (mỗi request một instance).
+3. Đăng ký các cặp `interface → implementation` dạng `AddScoped`: mỗi aggregate một `I*WriteRepository`
+   + một `I*ReadRepository`, `IReportReadRepository`, và **`IUnitOfWork → SqlServerUnitOfWork`**.
 
 💡 Đây là một trong hai "công tắc" DB. API chỉ gọi 1 dòng `AddSqlServerInfrastructure(...)` là xong.
 

@@ -21,9 +21,16 @@ public static class DependencyInjection
         var aConnectionString = theConfiguration.GetConnectionString("MongoDB")
             ?? throw new InvalidOperationException("Connection string 'MongoDB' was not found.");
 
+        // Read connection (readPreference=secondaryPreferred) so queries can be served by secondaries
+        // on a multi-node replica set. Optional: falls back to the primary connection when absent,
+        // which keeps single-node / SqlServer setups working unchanged.
+        var aReadConnectionString = theConfiguration.GetConnectionString("MongoDBRead") ?? aConnectionString;
+
         var aDatabaseName = theConfiguration["MongoDatabaseName"] ?? "SellingNewProduct";
 
+        // Write/primary context (writes + transactions) and read/secondary context.
         theServices.AddDbContext<MongoAppDbContext>(o => o.UseMongoDB(aConnectionString, aDatabaseName));
+        theServices.AddDbContext<MongoReadDbContext>(o => o.UseMongoDB(aReadConnectionString, aDatabaseName));
 
         // Write side (command handlers).
         theServices.AddScoped<IUserWriteRepository, MongoUserWriteRepository>();

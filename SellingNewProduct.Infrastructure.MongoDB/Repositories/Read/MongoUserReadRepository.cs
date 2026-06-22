@@ -11,16 +11,16 @@ internal sealed class MongoUserReadRepository : IUserReadRepository
 {
     private const int DeletedStatus = (int)EntityStatus.Deleted;
 
-    private readonly MongoAppDbContext myMongoAppDbContext;
+    private readonly MongoReadDbContext myMongoReadDbContext;
 
-    public MongoUserReadRepository(MongoAppDbContext theMongoAppDbContext)
+    public MongoUserReadRepository(MongoReadDbContext theMongoReadDbContext)
     {
-        myMongoAppDbContext = theMongoAppDbContext;
+        myMongoReadDbContext = theMongoReadDbContext;
     }
 
     public async Task<User?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Users
+        var aDocument = await myMongoReadDbContext.Users
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == theId && r.Status != DeletedStatus, theCancellationToken);
 
@@ -29,7 +29,7 @@ internal sealed class MongoUserReadRepository : IUserReadRepository
 
     public async Task<User?> GetByUsernameAsync(string theUsername, CancellationToken theCancellationToken = default)
     {
-        var aDocument = await myMongoAppDbContext.Users
+        var aDocument = await myMongoReadDbContext.Users
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Username == theUsername && r.Status != DeletedStatus, theCancellationToken);
 
@@ -38,7 +38,7 @@ internal sealed class MongoUserReadRepository : IUserReadRepository
 
     public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken theCancellationToken = default)
     {
-        var aDocuments = await myMongoAppDbContext.Users
+        var aDocuments = await myMongoReadDbContext.Users
             .AsNoTracking()
             .Where(r => r.Status != DeletedStatus)
             .ToListAsync(theCancellationToken);

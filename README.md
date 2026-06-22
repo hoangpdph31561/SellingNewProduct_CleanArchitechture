@@ -11,39 +11,49 @@ Domain có thể chạy trên **SQL Server** hoặc **MongoDB** mà không sửa
 ## 1. Cấu trúc giải pháp
 
 ```
-SellingNewProduct.sln  (3 tầng)
-├── SellingNewProduct.Domain                    # Tầng trong cùng — business + Domain Service + read side, KHÔNG ref ai*
+SellingNewProduct.sln  (4 tầng)
+├── SellingNewProduct.Domain                    # Tầng trong cùng — business + Domain Service + ports, KHÔNG ref ai*
+├── SellingNewProduct.Application               # CQRS: Command/Query + Handler + Validator (MediatR) → ref Domain
 ├── SellingNewProduct.Infrastructure.SqlServer  # EF Core + SQL Server   → ref Domain
 ├── SellingNewProduct.Infrastructure.MongoDB    # EF Core + MongoDB       → ref Domain
-└── SellingNewProduct.API                        # Controller, DTO, Validation → ref Domain + 2 Infra
+└── SellingNewProduct.API                        # Controller, DTO → ref Application + Domain + 2 Infra
 ```
 <sub>* Domain chỉ ref `Microsoft.Extensions.DependencyInjection.Abstractions` (contract DI thuần để có `AddDomainServices`).</sub>
 
 Quy tắc phụ thuộc (Dependency Rule — mũi tên luôn hướng vào trong):
 
 ```
-API ─────► Infrastructure.* ─────► Domain
- │                                   ▲
- └───────────────────────────────────┘   (API cũng ref thẳng Domain)
+API ──► Application ──┐
+ │                    ▼
+ ├──► Infrastructure.* ──► Domain
+ └────────────────────────► Domain   (API cũng ref thẳng Domain để dùng read-model/query types)
 ```
 
-- **Domain** không reference project nào, không EF Core, không biết SQL/Mongo. Chứa: entity/aggregate,
-  **Domain Service** (`I*Service` — write side, API gọi cái này), **interface repository**, và **read side**
-  (`I*Queries` + read-model `*View` + `PagedResult<T>`).
-- **Infrastructure** triển khai interface repository **và** query của Domain (SQL bằng JOIN thật; Mongo ghép trong bộ nhớ).
-- **API** là *composition root*: validate format request, gọi Domain Service / query, chọn đăng ký Infra nào lúc khởi động.
+- **Domain** không reference project nghiệp vụ nào, không EF Core, không MediatR, không biết SQL/Mongo.
+  Chứa: entity/aggregate, **Domain Service** (tách `I*ReadService`/`I*WriteService`), **các port** vào
+  (`Interfaces/Inbound`) & ra (`Interfaces/Outbound`: repository, `IUnitOfWork`, `IPasswordHasher`),
+  read-model `*View`, input record `*SearchQuery`, `PagedResult<T>`.
+- **Application** là tầng CQRS: mỗi use-case một `*Command`/`*Query` + `*Handler` (mỏng) + `*Validator`
+  (gói chung **1 file/feature**). Handler chỉ điều phối, gọi xuống Domain Service. MediatR cho phép API
+  gửi qua `ISender`; `ValidationBehavior` validate request trong pipeline.
+- **Infrastructure** triển khai các outbound port của Domain (repository tách Read/Write + `IUnitOfWork`).
+  SQL đọc bằng JOIN thật; Mongo ghép trong bộ nhớ.
+- **API** là *composition root*: controller mỏng inject `ISender` gửi Command/Query, map DTO, chọn đăng ký
+  Infra nào lúc khởi động.
 
-> 💡 **Chỉ 3 tầng.** Tầng Application cũ (read side) đã gộp vào Domain. Đánh đổi: Domain "rộng" hơn (ôm
-> read-model) nhưng kiến trúc đơn giản, đúng mô hình API → Domain ← Infrastructure. Xem [docs/code/05-Application.md](docs/code/05-Application.md).
+> 💡 **4 tầng.** API không gọi thẳng Domain Service nữa mà gửi Command/Query qua MediatR (`ISender`) tới
+> tầng Application; handler ở Application điều phối rồi mới gọi Domain Service. Xem
+> [docs/code/05-Application.md](docs/code/05-Application.md).
 
 ## 2. Trách nhiệm từng tầng
 
 | Tầng | Chứa gì | Không được chứa |
 |------|---------|-----------------|
-| **Domain** | Entity nghiệp vụ, Value Object, Aggregate Root, Domain Event, business rule, **interface repository**, **Domain Service** (`I*Service`), **read side** (`I*Queries` + read-model `*View` + `PagedResult<T>`) | EF Core, attribute DB, DTO, JSON |
-| **Infrastructure.SqlServer** | `DbContext`, persistence model riêng (`*Record`), `IEntityTypeConfiguration`, Repository impl, Query impl (JOIN), Mapper Domain↔Record | Logic nghiệp vụ |
-| **Infrastructure.MongoDB** | `DbContext` (provider Mongo), persistence model riêng (`*Document`), Repository impl, Query impl (stitch), Mapper Domain↔Document | Logic nghiệp vụ |
-| **API** | Controller (gọi Domain Service/query), Request/Response DTO, Validation (FluentValidation), `IPasswordHasher` impl, DI/config, mapping DTO↔Domain | Truy cập DB trực tiếp, business rule |
+| **Domain** | Entity nghiệp vụ, Value Object, Aggregate Root, Domain Event, business rule, **Domain Service** (`*ReadService`/`*WriteService`), **port** (`Interfaces/Inbound` + `Interfaces/Outbound`: repository, `IUnitOfWork`, `IPasswordHasher`), read-model `*View`, `*SearchQuery`, `PagedResult<T>` | EF Core, MediatR, attribute DB, DTO, JSON |
+| **Application** | `*Command`/`*Query` (record input), `*Handler` (mỏng — gọi Domain Service), `*Validator` (FluentValidation), `ValidationBehavior` (MediatR pipeline). Mỗi feature **1 file** gộp cả ba | Business rule thật (ở Domain), truy cập DB, EF Core |
+| **Infrastructure.SqlServer** | `DbContext` + `SqlServerUnitOfWork`, persistence model (`*Record`), `IEntityTypeConfiguration`, Repository impl (Read/Write), Mapper Domain↔Record | Logic nghiệp vụ |
+| **Infrastructure.MongoDB** | `DbContext` (provider Mongo) + `MongoUnitOfWork`, persistence model (`*Document`), Repository impl (Read/Write), Mapper Domain↔Document | Logic nghiệp vụ |
+| **API** | Controller (inject `ISender`, gửi Command/Query), Request/Response DTO, `IPasswordHasher` impl, `ApiResponseWrapperFilter`, `ExceptionHandlingMiddleware`, DI/config, mapping DTO↔Command/Response | Truy cập DB trực tiếp, business rule, gọi repository |
 
 ## 3. Yêu cầu môi trường
 
@@ -68,7 +78,7 @@ dotnet run --project SellingNewProduct.API
 | [docs/ROADMAP.md](docs/ROADMAP.md) | **Checklist tiến độ** — nguồn sự thật để tiếp tục công việc |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, code style, package |
 | [docs/code/](docs/code/README.md) | **Giải thích từng file `.cs` và từng method** (cho người học) |
-| [docs/code/05-Application.md](docs/code/05-Application.md) | **Read side / CQRS-lite**: read-model, query JOIN nhiều bảng (SQL vs Mongo) |
+| [docs/code/05-Application.md](docs/code/05-Application.md) | **Tầng Application (CQRS)**: Command/Query + Handler + Validator, MediatR `ISender`, `ValidationBehavior`; read-model JOIN nhiều bảng (SQL vs Mongo) |
 | [docs/code/06-Pagination-Search.md](docs/code/06-Pagination-Search.md) | **Phân trang, tìm kiếm, lọc & sắp xếp**: `PagedResult<T>`, filter, sort (SQL vs Mongo) |
 
 > **Khi mở chat mới:** bảo Claude đọc `docs/ROADMAP.md` trước để biết đã làm tới đâu.
