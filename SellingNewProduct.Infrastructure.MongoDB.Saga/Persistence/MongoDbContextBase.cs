@@ -1,0 +1,33 @@
+using Microsoft.EntityFrameworkCore;
+using SellingNewProduct.Infrastructure.MongoDB.Saga.Models;
+
+namespace SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
+
+/// <summary>
+/// Shared EF Core mapping for the MongoDB side of the saga provider. Maps ONLY the aggregates
+/// assigned to MongoDB — Products, Categories, Customers, Employees, Users. Orders and Payments
+/// live in SQL Server here, so they are not mapped. Both the write context
+/// (<see cref="MongoAppDbContext"/>, primary) and the read context (<see cref="MongoReadDbContext"/>,
+/// secondaries) derive from this so the document set lives in one place.
+/// </summary>
+public abstract class MongoDbContextBase : DbContext
+{
+    protected MongoDbContextBase(DbContextOptions theOptions) : base(theOptions)
+    {
+    }
+
+    internal DbSet<UserDocument> Users => Set<UserDocument>();
+    internal DbSet<CustomerDocument> Customers => Set<CustomerDocument>();
+    internal DbSet<EmployeeDocument> Employees => Set<EmployeeDocument>();
+    internal DbSet<CategoryDocument> Categories => Set<CategoryDocument>();
+    internal DbSet<ProductDocument> Products => Set<ProductDocument>();
+
+    // Durable saga effects (stock deltas) used by the in-process compensation and recovery worker.
+    internal DbSet<SagaEffectDocument> SagaEffects => Set<SagaEffectDocument>();
+
+    protected override void OnModelCreating(ModelBuilder theModelBuilder)
+    {
+        theModelBuilder.ApplyConfigurationsFromAssembly(typeof(MongoDbContextBase).Assembly);
+        base.OnModelCreating(theModelBuilder);
+    }
+}

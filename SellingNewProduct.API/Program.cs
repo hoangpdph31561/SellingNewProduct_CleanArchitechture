@@ -3,6 +3,9 @@ using SellingNewProduct.API.Middleware;
 using SellingNewProduct.Application;
 using SellingNewProduct.Infrastructure.MongoDB;
 using SellingNewProduct.Infrastructure.SqlServer;
+using SellingNewProduct.Infrastructure.Saga.Core;
+using SellingNewProduct.Infrastructure.SqlServer.Saga;
+using SellingNewProduct.Infrastructure.MongoDB.Saga;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +21,16 @@ var aProvider = builder.Configuration["DatabaseProvider"] ?? "SqlServer";
 if (string.Equals(aProvider, "MongoDB", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddMongoInfrastructure(builder.Configuration);
+}
+else if (string.Equals(aProvider, "Hybrid", StringComparison.OrdinalIgnoreCase)
+         || string.Equals(aProvider, "Saga", StringComparison.OrdinalIgnoreCase))
+{
+    // Polyglot persistence: Order/Payment in SQL Server, the rest in MongoDB, tied together by a
+    // saga (cross-database transaction via local commits + compensations). Needs BOTH the SqlServer
+    // and MongoDB connection strings. See docs/saga-hybrid.md.
+    builder.Services.AddSagaCore();
+    builder.Services.AddSqlServerSagaInfrastructure(builder.Configuration);
+    builder.Services.AddMongoSagaInfrastructure(builder.Configuration);
 }
 else
 {

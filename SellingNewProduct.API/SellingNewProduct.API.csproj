@@ -17,6 +17,9 @@
     <ProjectReference Include="..\SellingNewProduct.Application\SellingNewProduct.Application.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.SqlServer\SellingNewProduct.Infrastructure.SqlServer.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.MongoDB\SellingNewProduct.Infrastructure.MongoDB.csproj" />
+    <ProjectReference Include="..\SellingNewProduct.Infrastructure.Saga.Core\SellingNewProduct.Infrastructure.Saga.Core.csproj" />
+    <ProjectReference Include="..\SellingNewProduct.Infrastructure.SqlServer.Saga\SellingNewProduct.Infrastructure.SqlServer.Saga.csproj" />
+    <ProjectReference Include="..\SellingNewProduct.Infrastructure.MongoDB.Saga\SellingNewProduct.Infrastructure.MongoDB.Saga.csproj" />
   </ItemGroup>
 
 </Project>
