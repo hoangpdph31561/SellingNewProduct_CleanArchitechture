@@ -179,20 +179,6 @@ namespace SellingNewProduct.Infrastructure.SqlServer.Saga.Migrations
                     b.ToTable("Payments", (string)null);
                 });
 
-            modelBuilder.Entity("SellingNewProduct.Infrastructure.SqlServer.Saga.Models.SagaCommitRecord", b =>
-                {
-                    b.Property<Guid>("SagaId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CommittedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("SagaId");
-
-                    b.ToTable("SagaCommits", (string)null);
-                });
-
             modelBuilder.Entity("SellingNewProduct.Infrastructure.SqlServer.Saga.Models.OrderDetailRecord", b =>
                 {
                     b.HasOne("SellingNewProduct.Infrastructure.SqlServer.Saga.Models.OrderRecord", null)

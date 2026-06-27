@@ -22,8 +22,8 @@ public abstract class MongoDbContextBase : DbContext
     internal DbSet<CategoryDocument> Categories => Set<CategoryDocument>();
     internal DbSet<ProductDocument> Products => Set<ProductDocument>();
 
-    // Durable saga effects (stock deltas) used by the in-process compensation and recovery worker.
-    internal DbSet<SagaEffectDocument> SagaEffects => Set<SagaEffectDocument>();
+    // The single durable saga ledger (one document per saga). Drives rollback and crash recovery.
+    internal DbSet<SagaInstanceDocument> SagaInstances => Set<SagaInstanceDocument>();
 
     protected override void OnModelCreating(ModelBuilder theModelBuilder)
     {

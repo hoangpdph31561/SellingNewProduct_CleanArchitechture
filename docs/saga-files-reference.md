@@ -1,422 +1,643 @@
-# Saga — Tham chiếu file & ví dụ Order
+# Saga — Giải thích từng class + luồng chạy (kèm code)
 
-Tài liệu liệt kê **toàn bộ file liên quan đến Saga** (provider `DatabaseProvider=Hybrid`), mỗi file
-dùng để làm gì, các **method quan trọng**, và một **ví dụ Order** đi từng bước cho cả 3 kịch bản:
-thành công, thất bại (rollback in-process), và crash (recovery).
+Tài liệu này đi **theo đúng thứ tự một saga chạy** (Begin → bước Mongo → bước SQL → Commit / Rollback →
+Recovery). Mỗi class được giới thiệu **ngay nơi nó xuất hiện trong luồng**, kèm code và giải thích từng
+property/method để khỏi phải trượt qua lại. Đọc một mạch từ trên xuống là hiểu cả cơ chế.
 
-> Bối cảnh: SQL Server giữ `Order/OrderDetail/Payment`; MongoDB giữ `Product/Category/Customer/Employee/User`.
-> Một thao tác ghi xuống cả 2 DB không thể là transaction ACID chung → dùng **Saga**: mỗi DB một
-> transaction local thật + bù trừ (compensation) cho khe cross-DB + recovery khi crash.
-
----
-
-## 1. `SellingNewProduct.Infrastructure.Saga.Core` — bộ máy saga (không phụ thuộc DB nào)
-
-### `Saga/SagaContext.cs`
-Trạng thái **của một saga** trong 1 request (DI `scoped` → mọi thành phần trong cùng scope dùng chung).
-- `Begin()` — mở saga mới: sinh `SagaId`, xoá danh sách compensation, đặt `IsActive=true`.
-- `IsActive` — repo saga-aware nhìn cờ này để biết có đang trong saga không.
-- `RegisterCompensation(tên, hàm)` — nhét một **hàm hoàn tác** vào danh sách (chỉ khi đang active).
-- `Compensations`, `StepNames` — danh sách hoàn tác (chạy ngược) + tên các bước (ghi vào log).
-- `MarkCommitted / MarkCompensating / MarkCompensated / MarkFailed` — chuyển trạng thái để ghi log.
-
-### `Saga/SagaStatus.cs`
-Enum vòng đời saga: `NotStarted → Started → Committed` hoặc `→ Compensating → Compensated / Failed`.
-
-### `Saga/ISagaParticipant.cs`
-Đại diện **một DB tham gia saga**. Kernel điều phối qua interface này, không biết DB cụ thể.
-- `IsPivot` — `true` cho store commit **cuối** (ở đây là SQL). Store non-pivot commit **trước**.
-- `BeginAsync()` — mở transaction local của store.
-- `CommitAsync()` — commit transaction local.
-- `RollbackAsync()` — huỷ transaction local (native).
-
-### `Saga/ISagaLog.cs` + `Saga/NullSagaLog.cs`
-Nhật ký saga (audit "track commit").
-- `StartAsync(sagaId)` — ghi dòng `Started`.
-- `CompleteAsync(sagaId, status, steps)` — ghi kết quả cuối (`Committed/Compensated/Failed`).
-- `NullSagaLog` — bản rỗng mặc định (khi không có log bền vững); SQL provider thay bằng bản thật.
-
-### `Persistence/SagaUnitOfWork.cs`
-Bản cài đặt `IUnitOfWork` của Domain **dạng saga**. Domain gọi y như cũ, không biết bên dưới là saga.
-- `BeginTransactionAsync()` — **Begin**: gọi `SagaContext.Begin()`, mở transaction cho **mọi**
-  participant (SQL + Mongo), ghi log `Started`, trả về `SagaUnitOfWorkTransaction`.
-
-### `Persistence/SagaUnitOfWorkTransaction.cs`
-Handle transaction trả về cho Domain (`IUnitOfWorkTransaction`).
-- `CommitAsync()` — **Commit**: commit các participant **non-pivot trước** (Mongo), rồi **pivot sau**
-  (SQL). Ghi log `Committed`. Nếu pivot commit ném lỗi → để exception nổi lên cho caller.
-- `RollbackAsync()` — **Rollback**: huỷ native mọi transaction còn pending, rồi **chạy ngược các
-  compensation** để hoàn tác store đã commit (Mongo). Ghi log `Compensated` (hoặc `Failed`).
-- `DisposeAsync()` — **End**: nếu chưa Commit/Rollback thì tự Rollback (qua `await using`).
-
-### `CrossDb/CrossDbContracts.cs`
-Hai "port lá" để **đọc xuyên DB mà không tạo vòng phụ thuộc** (mỗi bản cài chỉ phụ thuộc context DB của
-chính nó):
-- `ICrossDbDirectory` — Mongo cấp **tên** (customer/employee/product/category) cho read model bên SQL.
-- `ICrossDbOrderStats` — SQL cấp **thống kê order** (đếm theo nhân viên, tổng theo khách) cho read model
-  bên Mongo.
-
-### `Recovery/ISagaEffectStore.cs`
-Kho **hiệu ứng bền vững** mà saga đã ghi xuống Mongo (delta kho). Dùng để hoàn tác.
-- `GetPendingSagaIdsAsync()` — các saga có effect chưa revert (ứng viên recovery).
-- `RevertAsync(sagaId)` — hoàn tác delta kho + đánh dấu đã revert. **Idempotent**.
-- `RemoveAsync(sagaId)` — xoá effect khi saga đã xác nhận nhất quán.
-
-### `Recovery/ISagaCommitStore.cs`
-Kho **bằng chứng pivot (SQL) đã commit**.
-- `ExistsAsync(sagaId)` — có marker không (⇔ SQL đã commit cho saga này).
-- `RemoveAsync(sagaId)` — dọn marker.
-
-### `Recovery/SagaRecoveryService.cs`
-`BackgroundService` chạy **một lần lúc khởi động** (chỉ provider Hybrid) để khép khe crash-giữa-2-commit.
-- `ExecuteAsync()` — tạo scope, lấy 2 store + log, duyệt `GetPendingSagaIdsAsync()`.
-- `ReconcileAsync(sagaId)` — đối chiếu:
-  - SQL commit marker **có** → cả 2 đã commit → xoá 2 marker + log `Committed`.
-  - SQL commit marker **không** → Mongo commit mà pivot không → `RevertAsync` (trả kho) + log `Compensated`.
-
-### `DependencyInjection.cs`
-`AddSagaCore()` — đăng ký `SagaContext`, `IUnitOfWork→SagaUnitOfWork`, `NullSagaLog` mặc định, và
-`SagaRecoveryService`.
+> Bối cảnh: provider `DatabaseProvider=Hybrid`. SQL Server giữ `Order/OrderDetail/Payment`; MongoDB giữ
+> `Product/Category/Customer/Employee/User` **và** sổ cái saga `saga_instances`. Một thao tác ghi xuống cả
+> 2 DB không thể là transaction ACID chung → dùng **Saga orchestration**: mỗi bước **commit ngay** vào DB
+> của nó, ghi cách hoàn tác vào **một sổ cái duy nhất**; bước sau lỗi thì replay compensation; crash thì
+> recovery đọc lại sổ cái mà hoàn tác.
 
 ---
 
-## 1b. `SagaId` — sợi dây buộc 2 DB (qua `SagaContext`)
+## 0. Sơ đồ gọi (ai gọi ai)
 
-Cả hai DB **không** bị ép vào một transaction ACID chung; thay vào đó chúng cùng mang **một `SagaId`**.
-Vật giữ id đó là `SagaContext`, đăng ký **`scoped`** nên mọi thành phần trong cùng request dùng **chung
-một instance** → chung một id.
+```
+OrderWriteService.PersistInTransactionAsync         (Domain — KHÔNG đổi)
+  │  await using tx = uow.BeginTransactionAsync()
+  ▼
+SagaUnitOfWork.BeginTransactionAsync                 → SagaContext.Begin() + ISagaStore.StartAsync()
+  │  returns SagaUnitOfWorkTransaction (tx)
+  │
+  ├─ productRepo.UpdateRangeAsync()  ── bước Mongo (Compensatable) ─► MongoSagaStore.StageStepAsync()
+  │                                                                    (trừ kho + enroll, 1 Mongo tx)
+  ├─ orderRepo.UpdateAsync()         ── bước SQL (Pivot) ───────────► ISagaStore.EnrollStepAsync() (marker Pivot)
+  │
+  ├─ tx.CommitAsync()   (thành công) ─► ISagaStore.RemoveAsync()      (xoá sổ cái)
+  └─ tx.RollbackAsync() (lỗi)        ─► SagaCompensator.CompensateAsync()
+                                          ├─ ISagaCompensationRegistry.Resolve("RevertStock")
+                                          └─ MongoStockCompensationHandler.CompensateAsync()  (cộng trả kho)
 
-```csharp
-// Saga.Core/DependencyInjection.cs
-theServices.AddScoped<SagaContext>();              // 1 instance / request
-theServices.AddScoped<IUnitOfWork, SagaUnitOfWork>();
+Khi khởi động lại:
+SagaRecoveryService ─► ISagaStore.GetUnfinishedAsync() ─► SagaCompensator.CompensateAsync() (mỗi saga dở dang)
 ```
 
-**SagaId sinh ra một lần khi Begin:**
+Mọi sợi dây buộc 2 DB là **`SagaId`**; nó nằm trong `SagaContext` lúc chạy và trong document `saga_instances`
+để sống sót qua crash.
+
+---
+
+## 1. Điểm vào (Domain — KHÔNG đổi): `OrderWriteService.PersistInTransactionAsync`
+
+Đây là chỗ nghiệp vụ gọi saga. Quan trọng: nó **không biết** mình đang chạy saga — chỉ thấy port
+`IUnitOfWork` với bộ verb Begin/Commit/Rollback như mọi provider khác.
 
 ```csharp
-// SagaUnitOfWork.BeginTransactionAsync
-myContext.Begin();                                  // SagaContext.Begin(): SagaId = Guid.NewGuid()
-foreach (var p in myParticipants) await p.BeginAsync(ct);
-await myLog.StartAsync(myContext.SagaId, ct);       // log Started mang SagaId
-```
-
-**Phía Mongo đóng dấu SagaId** (cùng `SagaContext` được inject vào repo):
-
-```csharp
-// MongoProductWriteRepository (ctor: MongoAppDbContext, SagaContext, MongoSagaEffectStore)
-myEffectStore.Record(mySagaContext.SagaId, aStockRemoved);          // SagaEffect.Id = SagaId
-var aSagaId = mySagaContext.SagaId;
-mySagaContext.RegisterCompensation($"RevertStock:{aSagaId}",
-    ct => myEffectStore.RevertAsync(aSagaId, ct));
-// → MongoSagaEffectStore.Record: new SagaEffectDocument { Id = theSagaId, ... }
-```
-
-**Phía SQL đóng dấu CÙNG SagaId** (cùng `SagaContext` được inject vào participant):
-
-```csharp
-// SqlSagaParticipant (ctor: AppDbContext, SagaContext) — trong CommitAsync
-myAppDbContext.SagaCommits.Add(new SagaCommitRecord
+private async Task PersistInTransactionAsync(Order theOrder, IEnumerable<Product> theProducts, CancellationToken ct)
 {
-    SagaId = mySagaContext.SagaId,                  // ← ĐÚNG cùng id với SagaEffect bên Mongo
-    CommittedUtc = DateTime.UtcNow
-});
-await myAppDbContext.SaveChangesAsync(ct);          // ghi trong transaction SQL
-await myTransaction.CommitAsync(ct);
-```
-
-⇒ Sau một saga, Mongo có `saga_effects._id = SagaId` và SQL có `SagaCommits.SagaId = SagaId` — **cùng một
-GUID**. Đó là khoá để ghép hai phía.
-
-**Lưu ý sống còn:** `SagaContext` là `scoped` → **biến mất khi request kết thúc / crash**. Nên `SagaId`
-chỉ "sống sót" nhờ đã được ghi xuống các bản ghi **bền vững**. Recovery vì thế đọc id từ DB chứ không
-từ `SagaContext`:
-
-```csharp
-// SagaRecoveryService
-var aPending = await aEffectStore.GetPendingSagaIdsAsync(ct);   // SagaId lấy từ saga_effects (Mongo)
-foreach (var aSagaId in aPending)
-    if (await aCommitStore.ExistsAsync(aSagaId, ct)) { /* cùng id có trong SagaCommits (SQL)? */ }
-```
-
-Tóm lại: **`SagaContext` giữ `SagaId` lúc đang chạy; còn để xuyên qua 2 DB và sống sót qua crash, `SagaId`
-được đóng dấu xuống `saga_effects` (Mongo) và `SagaCommits` (SQL)** — hai mặt của cùng một id.
-
----
-
-## 2. `SellingNewProduct.Infrastructure.SqlServer.Saga` — phía SQL (Order/Payment + pivot)
-
-- **`Persistence/AppDbContext.cs`** — context nghiệp vụ: `Orders`, `OrderDetails`, `Payments`, và
-  `SagaCommits` (bảng marker, nằm CHUNG context để atomic với commit nghiệp vụ).
-- **`Persistence/SagaLogDbContext.cs`** — context **riêng** chỉ chứa `SagaTransactions` (nhật ký). Tách
-  ra để log `Compensated` không bị cuốn theo khi rollback nghiệp vụ.
-- **`Models/*Record.cs`** — model bảng: `OrderRecord`, `OrderDetailRecord`, `PaymentRecord`,
-  `SagaTransactionRecord` (nhật ký), `SagaCommitRecord` (marker pivot: `SagaId`, `CommittedUtc`).
-- **`Mapping/OrderMapper.cs`, `PaymentMapper.cs`** — chuyển Domain ⇄ Record (`ToRecord/MapInto/ToDomain`).
-- **`Repositories/Write/SqlOrderWriteRepository.cs`, `SqlPaymentWriteRepository.cs`** — ghi Order/Payment.
-  Khi saga active, `SaveChanges` của chúng nằm trong transaction SQL nên **pending** tới khi commit.
-- **`Repositories/Read/Sql*ReadRepository.cs`** — đọc Order/Payment/Report; enrich tên từ Mongo qua
-  `ICrossDbDirectory` (vì không JOIN xuyên DB được).
-- **`Saga/SqlSagaParticipant.cs`** — participant **pivot** (`IsPivot=true`).
-  - `BeginAsync()` — `AppDbContext.Database.BeginTransactionAsync()`.
-  - `CommitAsync()` — **ghi `SagaCommitRecord` trong cùng transaction** rồi commit (marker durable ⇔ pivot commit).
-  - `RollbackAsync()` — rollback transaction SQL.
-- **`Saga/SqlSagaLog.cs`** — bản thật của `ISagaLog`, ghi `SagaTransactions` bằng `SagaLogDbContext`.
-- **`Saga/SqlSagaCommitStore.cs`** — `ISagaCommitStore`: `ExistsAsync/RemoveAsync` cho recovery.
-- **`Saga/SqlCrossDbOrderStats.cs`** — `ICrossDbOrderStats`: đếm/sum order cho read model Mongo.
-- **`DependencyInjection.cs`** — `AddSqlServerSagaInfrastructure()` đăng ký tất cả phía SQL.
-- **`Migrations/`** — `InitialCreate` (Orders/OrderDetails/Payments), `AddSagaCommits` (bảng marker),
-  `SagaLog/InitialSagaLog` (bảng nhật ký).
-
----
-
-## 3. `SellingNewProduct.Infrastructure.MongoDB.Saga` — phía Mongo (catalogue/people + non-pivot)
-
-- **`Persistence/MongoDbContextBase.cs`** (+ `MongoAppDbContext` ghi, `MongoReadDbContext` đọc) — map 5
-  collection + `saga_effects`.
-- **`Models/*Document.cs`** — `Product/Category/Customer/Employee/User`Document, và
-  `SagaEffectDocument` (`Id=SagaId`, `Reverted`, `Deltas: [{ProductId, Removed}]`).
-- **`Mapping/*Mapper.cs`** — Domain ⇄ Document.
-- **`Repositories/Write/MongoProductWriteRepository.cs`** — **saga-aware** (xem method chính dưới).
-- **`Repositories/Write/Mongo{Category,Customer,Employee,User}WriteRepository.cs`** — ghi thường.
-- **`Repositories/Read/Mongo*ReadRepository.cs`** — đọc 5 aggregate; Customer/Employee read lấy thống kê
-  order qua `ICrossDbOrderStats`.
-- **`Saga/MongoSagaParticipant.cs`** — participant **non-pivot** (`IsPivot=false`).
-  - `BeginAsync()` — `MongoAppDbContext.Database.BeginTransactionAsync()` (cần replica set).
-  - `CommitAsync()` / `RollbackAsync()` — commit/huỷ transaction Mongo.
-- **`Saga/MongoSagaEffectStore.cs`** — `ISagaEffectStore` + ghi effect.
-  - `Record(sagaId, delta)` — **enqueue** effect vào context (KHÔNG save) → repo save chung 1 lần trong tx.
-  - `RevertAsync(sagaId)` — mở tx Mongo, cộng trả kho theo delta, đặt `Reverted=true`. **Idempotent**.
-  - `GetPendingSagaIdsAsync()` / `RemoveAsync()` — cho recovery.
-- **`Saga/MongoCrossDbDirectory.cs`** — `ICrossDbDirectory`: cấp tên cho read model SQL.
-- **`DependencyInjection.cs`** — `AddMongoSagaInfrastructure()` đăng ký tất cả phía Mongo.
-
-### Method quan trọng: `MongoProductWriteRepository.UpdateRangeAsync(products)`
-Đây là nơi "phép thuật" saga phía Mongo xảy ra (được gọi khi confirm/cancel order):
-1. Load document kho hiện tại theo id.
-2. Tính **delta** mỗi product: `Removed = kho_cũ − kho_mới` (dương = trừ kho khi confirm; âm = trả kho khi cancel).
-3. `MapInto` ghi kho mới vào document.
-4. Nếu **đang trong saga**: `effectStore.Record(SagaId, delta)` (enqueue) **và**
-   `SagaContext.RegisterCompensation(... ct => effectStore.RevertAsync(SagaId, ct))`.
-5. `SaveChangesAsync()` — ghi **kho mới + SagaEffect cùng một lần** trong transaction Mongo (atomic).
-
----
-
-## 4. File bị sửa (ngoài 3 project mới)
-
-- **`Domain/Interfaces/Outbound/IUnitOfWork.cs`** — chỉ thêm XML-doc bộ verb Begin/Commit/Rollback/End,
-  **không đổi chữ ký** → Domain & 2 provider gốc không phải sửa.
-- **`API/Program.cs`** — thêm nhánh `DatabaseProvider=Hybrid` gọi `AddSagaCore + AddSqlServerSaga + AddMongoSaga`.
-- **`API/appsettings.json`** — thêm `ConnectionStrings:SqlServerSaga`; Mongo phải là replica set.
-- **`Domain/Services/OrderWriteService.cs`** — **KHÔNG đổi** (điểm mấu chốt: nghiệp vụ không biết gì về saga).
-
----
-
-## 5. Ví dụ Order — đi từng bước
-
-Điểm vào nghiệp vụ (không đổi): `OrderWriteService.PersistInTransactionAsync` được gọi bởi `ConfirmAsync`
-và `CancelAsync` (đơn đã confirmed). Nội dung:
-
-```csharp
-await using var tx = await myUnitOfWork.BeginTransactionAsync(ct);   // (A) Begin
-try
-{
-    await myProductRepository.UpdateRangeAsync(theProducts, ct);     // (B) Mongo: trừ/trả kho
-    await myOrderRepository.UpdateAsync(theOrder, ct);               // (C) SQL: đổi trạng thái order
-    await tx.CommitAsync(ct);                                        // (D) Commit
-}
-catch
-{
-    await tx.RollbackAsync(ct);                                      // (E) Rollback
-    throw;
+    await using var aTransaction = await myUnitOfWork.BeginTransactionAsync(ct);   // (A) Begin
+    try
+    {
+        await myProductRepository.UpdateRangeAsync(theProducts, ct);              // (B) bước Mongo: trừ/trả kho
+        await myOrderRepository.UpdateAsync(theOrder, ct);                        // (C) bước SQL: đổi trạng thái order
+        await aTransaction.CommitAsync(ct);                                       // (D) Commit
+    }
+    catch
+    {
+        await aTransaction.RollbackAsync(ct);                                     // (E) Rollback
+        throw;
+    }
 }
 ```
 
-### Place Order (chỉ SQL — KHÔNG phải saga)
-`PlaceAsync` chỉ `myOrderRepository.AddAsync(order)` → ghi thẳng vào SQL (Draft). Đọc
-customer/employee/product (Mongo) để kiểm tra tồn tại. Không có bước 2-DB nên không mở saga.
+Bên dưới `IUnitOfWork`, provider Hybrid cắm bản cài **saga**. Các mục sau bóc tách từng bước (A)→(E).
 
-### Confirm Order — kịch bản THÀNH CÔNG
-Mục tiêu: trừ kho (Mongo) + chuyển Order sang `Confirmed` (SQL), cả hai cùng có hiệu lực.
+---
 
-| Bước | Việc xảy ra |
-|---|---|
-| (A) Begin | `SagaContext.Begin()` (SagaId mới, IsActive=true); mở **transaction SQL** + **transaction Mongo**; log `Started`. |
-| (B) Mongo | `UpdateRangeAsync`: tính delta (Removed>0), ghi kho mới + `SagaEffect{Reverted=false}` (pending trong tx Mongo); đăng ký compensation `RevertStock`. |
-| (C) SQL | `Order.Update` → `Confirmed` (pending trong tx SQL). |
-| (D) Commit | commit **Mongo trước** (kho + effect thành durable) → commit **SQL sau**: ghi `SagaCommitRecord` **trong tx** rồi commit (order + marker durable). Log `Committed`. |
+## 2. (A) Begin — `SagaUnitOfWork` + `SagaContext`
 
-Kết quả: kho đã giảm ở Mongo, order `Confirmed` ở SQL, có `SagaCommits[SagaId]` + `SagaTransactions=Committed`.
-(Effect & marker còn lại sẽ được recovery dọn ở lần khởi động sau — vô hại.)
+### `SagaUnitOfWork` — bản cài `IUnitOfWork` dạng saga
+`BeginTransactionAsync` mở một saga: sinh `SagaId`, ghi dòng `Started` vào sổ cái, rồi trả về handle
+transaction.
 
-### Confirm Order — kịch bản THẤT BẠI (bước SQL lỗi, tiến trình còn sống)
-Ví dụ ràng buộc SQL vi phạm ở (C)/(D).
+```csharp
+internal sealed class SagaUnitOfWork : IUnitOfWork
+{
+    private readonly SagaContext myContext;
+    private readonly ISagaStore myStore;
+    private readonly SagaCompensator myCompensator;
+    // ...ctor inject 3 cái trên...
 
-| Bước | Việc xảy ra |
-|---|---|
-| (A)(B) | Như trên: Mongo trừ kho + ghi effect, đăng ký compensation. |
-| (D) Commit | commit Mongo **thành công** (kho durable) → commit SQL (pivot) **ném lỗi**. Exception nổi lên. |
-| (E) Rollback | `RollbackAsync`: rollback tx SQL (order chưa từng `Confirmed`) → chạy compensation `RevertStock` = `effectStore.RevertAsync(SagaId)` → **cộng trả kho** + `Reverted=true`. Log `Compensated`. |
+    public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken ct = default)
+    {
+        myContext.Begin("OrderWrite");                            // (1) sinh SagaId, đặt IsActive=true
+        await myStore.StartAsync(myContext.SagaId, myContext.Name, ct);  // (2) ghi saga_instances{Started}
+        return new SagaUnitOfWorkTransaction(myContext, myStore, myCompensator);  // (3) handle cho Commit/Rollback
+    }
+}
+```
 
-Kết quả: kho trở lại như cũ ở Mongo, order vẫn `Draft` ở SQL → **nhất quán**. Không có `SagaCommits[SagaId]`.
+### `SagaContext` — trạng thái của MỘT saga trong 1 request
+Đăng ký **`scoped`** → repo Mongo, repo SQL, store, unit-of-work trong **cùng** request dùng **chung một
+instance** ⇒ chung một `SagaId`. Nó **không** giữ danh sách compensation trong RAM nữa (đã chuyển xuống sổ
+cái) — chỉ giữ id + cờ "đang chạy saga không".
 
-> Nếu Mongo commit lỗi (chưa tới SQL): SQL còn pending → `RollbackAsync` huỷ native cả hai, **không cần
-> bù trừ**. Kho không đổi, order không đổi.
+```csharp
+public sealed class SagaContext
+{
+    public Guid SagaId { get; private set; }                 // id buộc 2 DB
+    public string Name { get; private set; } = "Saga";       // loại saga, ghi vào sổ cái để audit
+    public SagaStatus Status { get; private set; } = SagaStatus.NotStarted;
 
-### Confirm Order — kịch bản CRASH (giải thích bằng code, từ lúc đang commit)
+    public bool IsActive => Status == SagaStatus.Started;     // repo nhìn cờ này để biết có commit-and-enroll không
 
-Crash xảy ra **bên trong `CommitAsync`**, sau khi Mongo commit nhưng trước khi SQL commit:
+    public void Begin(string theName)                        // mở saga mới
+    {
+        SagaId = Guid.NewGuid();
+        Name = theName;
+        Status = SagaStatus.Started;
+    }
+
+    public void MarkCommitted()        => Status = SagaStatus.Committed;
+    public void MarkCompensating()     => Status = SagaStatus.Compensating;
+    public void MarkCompensated()      => Status = SagaStatus.Compensated;
+    public void MarkNeedsManualReview()=> Status = SagaStatus.NeedsManualReview;
+}
+```
+
+- **`SagaId`** — GUID duy nhất; xuất hiện ở cả document Mongo lẫn các log.
+- **`IsActive`** — chỉ `true` giữa `Begin()` và lúc kết thúc. Repo dùng nó để phân biệt "đang trong saga"
+  (phải enroll bước) với ghi thường.
+- **`Begin/Mark*`** — máy trạng thái nhỏ; `Status` đổi theo vòng đời (xem `SagaStatus` dưới).
+
+### `SagaStatus` — vòng đời saga
+
+```csharp
+public enum SagaStatus
+{
+    NotStarted = 0,         // chưa có saga
+    Started = 1,            // đang chạy, các bước đang commit
+    Committed = 2,          // thành công (happy path)
+    Compensating = 3,       // đang hoàn tác
+    Compensated = 4,        // đã hoàn tác xong
+    NeedsManualReview = 5,  // compensation thất bại quá số lần retry → cần can thiệp tay
+}
+```
+
+### `ISagaStore.StartAsync` + `MongoSagaStore.StartAsync` — ghi dòng `Started`
+`ISagaStore` là **port sổ cái** (mục 3 mô tả đủ). `StartAsync` tạo document saga rỗng:
+
+```csharp
+// MongoSagaStore : ISagaStore  (dùng chung MongoAppDbContext với các repo)
+public async Task StartAsync(Guid theSagaId, string theName, CancellationToken ct = default)
+{
+    myContext.SagaInstances.Add(new SagaInstanceDocument
+    {
+        Id = theSagaId,                       // _id = SagaId
+        Name = theName,
+        Status = (int)SagaStatus.Started,
+        RetryCount = 0,
+        StartedUtc = DateTime.UtcNow,
+        UpdatedUtc = DateTime.UtcNow,
+        Steps = new List<SagaStepDocument>()  // chưa bước nào
+    });
+    await myContext.SaveChangesAsync(ct);     // commit ngay (không transaction): saga đã tồn tại bền vững
+}
+```
+
+Sau (A): MongoDB có `saga_instances{_id=SagaId, Status=Started, Steps=[]}`.
+
+---
+
+## 3. (B) Bước Mongo (Compensatable) — `MongoProductWriteRepository.UpdateRangeAsync`
+
+Đây là nơi "phép thuật" commit-per-step xảy ra phía Mongo. Code (rút gọn phần đọc/ghi quen thuộc):
+
+```csharp
+public async Task UpdateRangeAsync(IEnumerable<Product> theProducts, CancellationToken ct = default)
+{
+    var aProducts = theProducts.ToList();
+    var aIds = aProducts.Select(p => p.Id).ToList();
+
+    var aDocuments = (await myMongoAppDbContext.Products.Where(r => aIds.Contains(r.Id)).ToListAsync(ct))
+        .ToDictionary(r => r.Id);
+
+    // (1) Tính delta TRƯỚC khi sửa, để biết phải trả lại bao nhiêu khi rollback.
+    var aDeltas = new List<StockDelta>();
+    foreach (var aProduct in aProducts)
+        if (aDocuments.TryGetValue(aProduct.Id, out var aDocument))
+        {
+            var aRemoved = aDocument.StockQuantity - aProduct.StockQuantity;   // dương = trừ; âm = trả
+            if (aRemoved != 0) aDeltas.Add(new StockDelta(aProduct.Id, aRemoved));
+            ProductMapper.MapInto(aDocument, aProduct);                        // ghi kho mới vào document
+        }
+
+    // (2) Ngoài saga (hoặc không đổi kho): commit thường, không enroll gì.
+    if (!mySagaContext.IsActive || aDeltas.Count == 0)
+    {
+        await myMongoAppDbContext.SaveChangesAsync(ct);
+        return;
+    }
+
+    // (3) Trong saga: mô tả bước + cách hoàn tác (nhãn "RevertStock" + data deltas).
+    var aStep = new SagaStepInfo(
+        "DecreaseStock",
+        SagaStepKind.Compensatable,
+        MongoStockCompensationHandler.Type,          // = "RevertStock"
+        JsonSerializer.Serialize(aDeltas),           // data để undo
+        Compensated: false);
+
+    // (4) Commit kho mới + ghi bước vào sổ cái NGUYÊN TỬ, rồi COMMIT NGAY.
+    await using var aTx = await myMongoAppDbContext.Database.BeginTransactionAsync(ct);
+    await mySagaStore.StageStepAsync(mySagaContext.SagaId, aStep, ct);   // enroll (CHƯA save)
+    await myMongoAppDbContext.SaveChangesAsync(ct);                      // products + saga_instances cùng 1 lần
+    await aTx.CommitAsync(ct);                                           // hai thứ durable cùng nhau
+}
+```
+
+Mấu chốt: **bước (4)** mở một Mongo transaction để việc trừ kho và việc ghi bước (có data hoàn tác) **cùng
+thành công hoặc cùng thất bại** — không bao giờ có "kho đã trừ mà không biết cách trả lại". Và nó **commit
+ngay**, không chờ tới cuối request.
+
+### `StockDelta` — data hoàn tác của bước kho
+
+```csharp
+internal sealed record StockDelta(Guid ProductId, int Removed);   // Removed = kho_cũ − kho_mới
+```
+
+Serialize list này thành chuỗi JSON, nhét vào `CompensationData` của bước. Khi rollback, handler đọc
+ngược ra để biết cộng trả bao nhiêu cho từng product.
+
+### `SagaStepKind` + `SagaStepInfo` — mô tả một bước (định nghĩa ở Core)
+
+```csharp
+public enum SagaStepKind
+{
+    Compensatable = 0,    // có undo, chạy TRƯỚC pivot  (vd trừ kho, ghi history)
+    Pivot = 1,            // điểm không quay lại         (vd ghi Order/Payment)
+    RetryableForward = 2, // không undo, chạy SAU pivot  (vd gửi email — retry tiến tới)
+}
+
+public sealed record SagaStepInfo(
+    string Name,               // tên bước, vd "DecreaseStock"
+    SagaStepKind Kind,         // loại bước → orchestrator xử lý đúng cách khi rollback
+    string? CompensationType,  // NHÃN tra handler hoàn tác (null nếu không cần undo)
+    string CompensationData,   // payload để undo (vd deltas JSON)
+    bool Compensated);         // true sau khi bước đã được hoàn tác
+```
+
+`SagaStepKind` chính là cơ chế để **scale thêm bước** mà orchestrator không đổi: thêm bước chỉ việc chọn
+đúng `Kind`. Quy tắc: `Compensatable` trước `Pivot`, `RetryableForward` sau `Pivot` → không bao giờ phải
+hoàn tác việc không hoàn tác được.
+
+### `MongoSagaStore.StageStepAsync` — enroll bước KHÔNG save (để repo commit chung 1 lần)
+
+```csharp
+// Nạp document saga (đang được track trong cùng context từ StartAsync) rồi thêm bước — KHÔNG SaveChanges.
+public async Task StageStepAsync(Guid theSagaId, SagaStepInfo theStep, CancellationToken ct = default)
+{
+    var aDocument = await LoadTrackedAsync(theSagaId, ct);
+    if (aDocument is null) return;
+    aDocument.Steps.Add(ToDocument(theStep));   // map SagaStepInfo → SagaStepDocument
+    aDocument.UpdatedUtc = DateTime.UtcNow;
+}
+
+// Bản TỰ save (dùng cho enroll không cần gộp transaction, vd marker Pivot bên SQL):
+public async Task EnrollStepAsync(Guid theSagaId, SagaStepInfo theStep, CancellationToken ct = default)
+{
+    await StageStepAsync(theSagaId, theStep, ct);
+    await myContext.SaveChangesAsync(ct);
+}
+```
+
+Vì sao có 2 bản? **`StageStepAsync`** để repo Mongo gộp việc ghi bước **vào chung** transaction trừ kho
+(atomic). **`EnrollStepAsync`** (stage + save) cho nơi không cần gộp — như marker Pivot bên SQL (mục 4).
+
+### `SagaInstanceDocument` — hình dạng một dòng sổ cái (collection `saga_instances`)
+
+```csharp
+internal sealed class SagaInstanceDocument
+{
+    public Guid Id { get; set; }                 // = SagaId
+    public string Name { get; set; } = "";
+    public int Status { get; set; }              // (int)SagaStatus
+    public int RetryCount { get; set; }
+    public DateTime StartedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+    public List<SagaStepDocument> Steps { get; set; } = new();   // các bước đã commit
+}
+
+internal sealed class SagaStepDocument
+{
+    public string Name { get; set; } = "";
+    public int Kind { get; set; }                // (int)SagaStepKind
+    public string? CompensationType { get; set; }// nhãn handler
+    public string CompensationData { get; set; } = "";
+    public bool Compensated { get; set; }
+}
+```
+
+Sau (B): `saga_instances{Status=Started, Steps=[ DecreaseStock(Compensatable, "RevertStock", deltas, Compensated=false) ]}`,
+và kho ở Mongo **đã giảm thật**.
+
+---
+
+## 4. (C) Bước SQL (Pivot) — `SqlOrderWriteRepository.UpdateAsync`
+
+SQL **commit ngay** (không còn participant giữ transaction treo). Ngay sau khi order đổi trạng thái, repo
+ghi một **marker Pivot** vào sổ cái = đánh dấu "đã qua điểm không quay lại".
+
+```csharp
+public async Task UpdateAsync(Order theOrder, CancellationToken ct = default)
+{
+    var aRecord = await myAppDbContext.Orders.Include(r => r.Details)
+        .FirstOrDefaultAsync(r => r.Id == theOrder.Id, ct);
+    if (aRecord is null) return;
+
+    OrderMapper.MapInto(aRecord, theOrder);
+    await myAppDbContext.SaveChangesAsync(ct);    // ★ order Confirmed COMMIT NGAY (Pivot)
+
+    await MarkPivotCommittedAsync(ct);            // ghi marker Pivot vào sổ cái
+}
+
+private async Task MarkPivotCommittedAsync(CancellationToken ct)
+{
+    if (!mySagaContext.IsActive) return;          // Ship / cancel-draft chạy ngoài saga → bỏ qua
+    var aPivot = new SagaStepInfo("ConfirmOrder", SagaStepKind.Pivot,
+        CompensationType: null, CompensationData: "", Compensated: false);
+    await mySagaStore.EnrollStepAsync(mySagaContext.SagaId, aPivot, ct);
+}
+```
+
+`CompensationType: null` vì Pivot **không bao giờ bị hoàn tác**. Marker này tồn tại để **recovery** biết
+saga đã thành công (xem pivot-guard ở mục 6/7). SQL không giữ bảng saga nào — nó chỉ ghi vào sổ cái Mongo
+qua `ISagaStore` (runtime = `MongoSagaStore`, cùng request scope).
+
+Sau (C): sổ cái có thêm `ConfirmOrder(Pivot)`; order ở SQL đã `Confirmed`.
+
+---
+
+## 5. (D) Commit — `SagaUnitOfWorkTransaction.CommitAsync`
+
+Lúc này mọi bước đã commit cục bộ rồi, nên Commit **không commit gì cả** — chỉ xoá dòng sổ cái (saga xong).
 
 ```csharp
 public async Task CommitAsync(CancellationToken ct = default)
 {
     if (myFinished) return;
-
-    foreach (var p in myParticipants.Where(p => !p.IsPivot))   // (1) Mongo (non-pivot)
-        await p.CommitAsync(ct);        // ✅ Mongo COMMIT xong: kho mới + SagaEffect đã DURABLE
-
-    // ★★★ CRASH ở ĐÂY: tắt nguồn sau khi Mongo commit, trước khi SQL commit ★★★
-
-    foreach (var p in myParticipants.Where(p => p.IsPivot))    // (2) SQL (pivot)
-        await p.CommitAsync(ct);        // ✖ chưa chạy: SagaCommit + order Confirmed KHÔNG có
-
+    myFinished = true;
     myContext.MarkCommitted();
-    await myLog.CompleteAsync(myContext.SagaId, SagaStatus.Committed, ...);  // ✖ không chạy
+
+    // Mọi bước đã durable ở DB của nó → saga thành công → bỏ dòng sổ cái.
+    // (Một dòng sổ cái còn sót lại CHÍNH LÀ tín hiệu cho recovery biết saga chưa kết thúc.)
+    await myStore.RemoveAsync(myContext.SagaId, ct);
 }
 ```
 
-- `MongoSagaParticipant.CommitAsync` (bước 1) đã xong: `await myTransaction.CommitAsync(ct)` ⇒ **kho +
-  `SagaEffect{Reverted=false}` durable**.
-- `SqlSagaParticipant.CommitAsync` (bước 2) **chưa từng chạy** ⇒ không có `SagaCommits[SagaId]`, order vẫn
-  `Draft` (transaction SQL bị server rollback khi mất kết nối). `SagaContext` + delegate compensation trong
-  RAM **mất sạch** → đường hoàn tác in-process không chạy được.
-
-Trạng thái ngay sau crash:
-
-| Store | Kết quả |
-|---|---|
-| Mongo | kho đã trừ + `SagaEffect{Reverted=false}` — durable |
-| SQL | order `Draft`, **không** có `SagaCommits[SagaId]` |
-
-**Khởi động lại → `SagaRecoveryService` tự dọn:**
-
-```csharp
-// ExecuteAsync
-var aPending = await aEffectStore.GetPendingSagaIdsAsync(ct);   // thấy SagaId (effect Reverted=false)
-foreach (var aSagaId in aPending) await ReconcileAsync(aSagaId, ...);
-
-// ReconcileAsync — marker SQL làm trọng tài
-if (await theCommitStore.ExistsAsync(theSagaId, ct))           // có SagaCommits không?
-{
-    await theEffectStore.RemoveAsync(theSagaId, ct);           // crash SAU khi SQL commit → dọn rác
-    await theCommitStore.RemoveAsync(theSagaId, ct);
-    await theLog.CompleteAsync(theSagaId, SagaStatus.Committed, ...);
-}
-else
-{
-    await theEffectStore.RevertAsync(theSagaId, ct);           // SQL chưa commit → TRẢ KHO
-    await theLog.CompleteAsync(theSagaId, SagaStatus.Compensated, ...);
-}
-```
-
-- Crash **trước** SQL commit (kịch bản chính): `ExistsAsync=false` → `RevertAsync` trả kho → order vẫn
-  `Draft` → **nhất quán**.
-- Crash **sau** SQL commit (chỉ chưa kịp dọn marker): `ExistsAsync=true` → **không revert**, chỉ xoá 2
-  marker (dữ liệu vốn đã đúng).
-
-Mấu chốt: `SagaCommits[SagaId]` được ghi **trong cùng transaction** với order, nên sự tồn tại của nó là
-ranh giới chính xác giữa "saga đã thành công" và "dở dang". `RevertAsync` lại idempotent (`Reverted`) nên
-dù in-process đã chạy hay chưa, recovery chạy lại vẫn an toàn.
-
-### Cancel Order (đơn đã Confirmed)
-Giống Confirm nhưng ngược chiều kho: `IncreaseStock` → delta `Removed < 0`. Compensation/recovery cộng
-`Removed` (số âm) ⇒ **trừ lại** đúng phần đã trả. Logic saga y hệt, chỉ khác dấu.
-
-### Ship / Cancel (Draft) — KHÔNG phải saga
-`ShipAsync` và huỷ đơn chưa Confirmed chỉ đụng SQL (1 lần ghi) → không mở saga.
+Sau (D) thành công: `saga_instances` **không còn dòng nào** cho saga này. Kho giảm ở Mongo + order
+`Confirmed` ở SQL → nhất quán, sạch sẽ.
 
 ---
 
-## 5b. Chi tiết code: khối đăng ký compensation & cách revert chạy khi lỗi
+## 6. (E) Rollback — `SagaUnitOfWorkTransaction.RollbackAsync` → `SagaCompensator`
 
-Trong `MongoProductWriteRepository.UpdateRangeAsync`, sau khi tính delta và ghi kho mới:
+Khi một bước ném exception, `OrderWriteService` gọi `RollbackAsync`. Nó **đọc sổ cái** rồi giao cho
+`SagaCompensator`:
 
 ```csharp
-if (mySagaContext.IsActive && aStockRemoved.Count > 0)
+public async Task RollbackAsync(CancellationToken ct = default)
 {
-    myEffectStore.Record(mySagaContext.SagaId, aStockRemoved);      // (1) bền vững — cho crash recovery
-    var aSagaId = mySagaContext.SagaId;
-    mySagaContext.RegisterCompensation($"RevertStock:{aSagaId}",
-        ct => myEffectStore.RevertAsync(aSagaId, ct));              // (2) in-memory — cho rollback tại chỗ
+    if (myFinished) return;
+    myFinished = true;
+    myContext.MarkCompensating();
+
+    var aSaga = await myStore.LoadAsync(myContext.SagaId, ct);   // đọc snapshot từ sổ cái
+    if (aSaga is null) return;                                   // chưa bước nào commit → khỏi undo
+
+    var aOk = await myCompensator.CompensateAsync(aSaga, ct);    // replay compensation
+    if (aOk) myContext.MarkCompensated();
+    else     myContext.MarkNeedsManualReview();
 }
 ```
 
-Khối này làm **2 việc song song, cùng trỏ về một hàm `RevertAsync`**:
-
-- **(1) `Record(...)`** — enqueue document `SagaEffect{ Reverted=false, Deltas=[{ProductId, Removed}] }`
-  vào `MongoAppDbContext`; nó được lưu **chung `SaveChanges`** (cùng transaction Mongo) với việc trừ kho
-  ⇒ tồn tại ⇔ Mongo đã commit. Đây là bản ghi **bền vững** để **recovery sau crash** biết trả lại bao nhiêu.
-- **(2) `RegisterCompensation(...)`** — nhét một **delegate** vào danh sách trong `SagaContext` (chỉ trong
-  RAM). Đây là đường **hoàn tác tại chỗ** khi tiến trình còn sống (lỗi ở bước SQL) — nhanh, khỏi đợi restart.
-
-> `var aSagaId = mySagaContext.SagaId;` — bắt SagaId ra biến cục bộ rồi mới capture, để delegate không trỏ
-> vào `SagaContext` (sẽ bị `Begin()` của saga sau ghi đè).
-
-### Đường đi khi lỗi (revert tại chỗ)
-
-**B1.** `OrderWriteService` bắt exception → gọi `tx.RollbackAsync(ct)`.
-
-**B2.** `SagaUnitOfWorkTransaction.RollbackAsync` (kernel) chạy ngược các compensation:
+### `SagaCompensator` — "nửa hoàn tác" của orchestrator (dùng chung cho rollback & recovery)
+Đây là trái tim của rollback. Đọc từng bước theo **thứ tự ngược**, bỏ qua Pivot/Forward, replay
+Compensatable, **retry** tới khi được; quá hạn → `NeedsManualReview`.
 
 ```csharp
-foreach (var aParticipant in myParticipants)                 // huỷ native tx còn pending (SQL rollback)
-    await SafeAsync(() => aParticipant.RollbackAsync(ct));
-
-for (var i = myContext.Compensations.Count - 1; i >= 0; i--)  // chạy NGƯỢC thứ tự
+public async Task<bool> CompensateAsync(SagaSnapshot theSaga, CancellationToken ct = default)
 {
-    var aCompensation = myContext.Compensations[i];
-    try { await aCompensation.CompensateAsync(ct); }          // ← chính là delegate (2): RevertAsync(aSagaId)
-    catch { aCompensated = false; }
+    // (0) Pivot-guard: nếu đã có bước Pivot → saga ĐÃ qua điểm không quay lại → KHÔNG hoàn tác,
+    //     chỉ finalize. Đây là cái khép khe "crash sau khi SQL commit nhưng trước khi dọn sổ cái".
+    if (theSaga.Steps.Any(s => s.Kind == SagaStepKind.Pivot))
+    {
+        await myStore.SetStatusAsync(theSaga.SagaId, SagaStatus.Committed, ct);
+        await myStore.RemoveAsync(theSaga.SagaId, ct);
+        return true;
+    }
+
+    await myStore.SetStatusAsync(theSaga.SagaId, SagaStatus.Compensating, ct);
+
+    // (1) Chạy NGƯỢC: bước commit gần nhất được undo trước.
+    for (var i = theSaga.Steps.Count - 1; i >= 0; i--)
+    {
+        var aStep = theSaga.Steps[i];
+        if (aStep.Kind != SagaStepKind.Compensatable || aStep.Compensated) continue;  // bỏ qua Pivot/Forward/đã undo
+
+        if (!await TryCompensateStepAsync(theSaga.SagaId, aStep, ct))   // (2) retry bên trong
+        {
+            await myStore.SetStatusAsync(theSaga.SagaId, SagaStatus.NeedsManualReview, ct);
+            return false;                                              // quá hạn → đậu lại chờ người
+        }
+    }
+
+    await myStore.SetStatusAsync(theSaga.SagaId, SagaStatus.Compensated, ct);
+    await myStore.RemoveAsync(theSaga.SagaId, ct);
+    return true;
 }
 ```
 
-**B3.** `MongoSagaEffectStore.RevertAsync` làm việc thật, trong **transaction Mongo riêng**, **idempotent**:
+`TryCompensateStepAsync` là phần **Resolve handler theo nhãn + retry**:
 
 ```csharp
-await using var aTransaction = await myMongoAppDbContext.Database.BeginTransactionAsync(ct);
+private async Task<bool> TryCompensateStepAsync(Guid theSagaId, SagaStepInfo theStep, CancellationToken ct)
+{
+    if (theStep.CompensationType is null) return true;                  // không có undo → coi như xong
 
-var aEffect = await myMongoAppDbContext.SagaEffects.FirstOrDefaultAsync(e => e.Id == sagaId, ct);
-if (aEffect is null || aEffect.Reverted) return;             // không có / đã revert → bỏ qua (idempotent)
+    var aHandler = myRegistry.Resolve(theStep.CompensationType);        // "RevertStock" → handler instance
+    if (aHandler is null) return false;                                 // quên đăng ký handler → cần review
 
-// ... load product theo Deltas ...
-foreach (var aDelta in aEffect.Deltas)
-    if (aProducts.TryGetValue(aDelta.ProductId, out var p))
-        p.StockQuantity += aDelta.Removed;                   // cộng TRẢ đúng phần đã đổi
+    var aCtx = new SagaCompensationContext(theSagaId, theStep.Name, theStep.CompensationData);
 
-aEffect.Reverted = true;                                     // đánh dấu để không revert lần 2
-await myMongoAppDbContext.SaveChangesAsync(ct);
-await aTransaction.CommitAsync(ct);
+    for (var anAttempt = 1; anAttempt <= MaxRetries; anAttempt++)       // MaxRetries = 5
+    {
+        try { await aHandler.CompensateAsync(aCtx, ct); return true; }  // chạy code undo thật
+        catch when (anAttempt < MaxRetries)
+        {
+            await myStore.IncrementRetryAsync(theSagaId, ct);
+            await Task.Delay(Backoff(anAttempt), ct);                   // backoff lũy thừa, chặn ở vài giây
+        }
+        catch { /* lần cuối: log, rơi ra dưới */ }
+    }
+    return false;
+}
 ```
 
-Với `Removed = kho_cũ − kho_mới`:
-- **Confirm** đã trừ 5 → `Removed=+5` → revert cộng `+5` → kho trở lại.
-- **Cancel** đã trả +5 → `Removed=−5` → revert cộng `−5` → trừ lại đúng phần đã trả.
+### `ISagaCompensationRegistry.Resolve` — đổi NHÃN string ra handler
+`Resolve` chỉ là tra `Dictionary<string, handler>`. Registry được dựng từ **mọi** handler đăng ký trong DI:
 
-Vì `Reverted=true` được set **trong cùng transaction** với việc cộng trả kho, nếu **recovery lúc khởi động**
-lỡ gọi lại `RevertAsync` (hệ thống không biết đường in-process đã chạy) thì `if (aEffect.Reverted) return;`
-chặn lại → **không bao giờ trừ/cộng kho hai lần**. Đó là tính idempotent giúp 2 đường (in-process + recovery)
-dùng chung an toàn.
+```csharp
+internal sealed class SagaCompensationRegistry : ISagaCompensationRegistry
+{
+    private readonly IReadOnlyDictionary<string, ISagaCompensationHandler> myHandlers;
+
+    public SagaCompensationRegistry(IEnumerable<ISagaCompensationHandler> theHandlers)  // DI tiêm cả danh sách
+    {
+        var aMap = new Dictionary<string, ISagaCompensationHandler>(StringComparer.Ordinal);
+        foreach (var h in theHandlers) aMap[h.CompensationType] = h;   // index theo nhãn
+        myHandlers = aMap;
+    }
+
+    public ISagaCompensationHandler? Resolve(string theType)
+        => myHandlers.TryGetValue(theType, out var h) ? h : null;
+}
+```
+
+### `ISagaCompensationHandler` + `MongoStockCompensationHandler` — code undo thật
+Interface: một handler biết hoàn tác **một loại** bước.
+
+```csharp
+public interface ISagaCompensationHandler
+{
+    string CompensationType { get; }                                   // NHÃN nó nhận
+    Task CompensateAsync(SagaCompensationContext ctx, CancellationToken ct = default);  // PHẢI idempotent
+}
+public sealed record SagaCompensationContext(Guid SagaId, string StepName, string CompensationData);
+```
+
+Bản cài cho bước kho — cộng trả kho **và** đánh dấu bước `Compensated` trong **một** Mongo transaction nên
+**idempotent** (chạy 2 lần không cộng kho gấp đôi):
+
+```csharp
+internal sealed class MongoStockCompensationHandler : ISagaCompensationHandler
+{
+    public const string Type = "RevertStock";                          // ← khớp nhãn repo gắn ở mục 3
+    public string CompensationType => Type;
+
+    public async Task CompensateAsync(SagaCompensationContext ctx, CancellationToken ct = default)
+    {
+        await using var aTx = await myContext.Database.BeginTransactionAsync(ct);
+
+        var aSaga = await myContext.SagaInstances.FirstOrDefaultAsync(s => s.Id == ctx.SagaId, ct);
+        var aStep = aSaga?.Steps.FirstOrDefault(s => s.Name == ctx.StepName);
+        if (aStep is null || aStep.Compensated) return;                // đã undo / không có → no-op (idempotent)
+
+        var aDeltas = JsonSerializer.Deserialize<List<StockDelta>>(ctx.CompensationData) ?? new();
+        var aIds = aDeltas.Select(d => d.ProductId).ToList();
+        var aProducts = (await myContext.Products.Where(p => aIds.Contains(p.Id)).ToListAsync(ct))
+            .ToDictionary(p => p.Id);
+
+        foreach (var d in aDeltas)
+            if (aProducts.TryGetValue(d.ProductId, out var p))
+                p.StockQuantity += d.Removed;                          // cộng TRẢ đúng phần đã đổi
+
+        aStep.Compensated = true;                                      // đánh dấu — cùng transaction
+        await myContext.SaveChangesAsync(ct);
+        await aTx.CommitAsync(ct);
+    }
+}
+```
+
+Với `Removed = kho_cũ − kho_mới`: confirm trừ 5 → `Removed=+5` → revert cộng `+5` (kho trở lại); cancel trả
++5 → `Removed=−5` → revert cộng `−5` (trừ lại đúng phần đã trả).
+
+Sau (E): kho ở Mongo trở về như cũ, order vẫn `Draft` ở SQL, sổ cái đã xoá → nhất quán.
 
 ---
 
-## 6. Bảng tổng kết "ai làm gì khi nào"
+## 7. Crash recovery — `SagaRecoveryService`
 
-| Tình huống | Mongo (kho) | SQL (order) | Marker | Hành động hoàn tác |
+`SagaContext` (RAM) mất khi crash, nhưng sổ cái `saga_instances` còn. `SagaRecoveryService` chạy **một lần
+lúc khởi động**, đọc mọi saga chưa kết thúc và giao cho **chính** `SagaCompensator` — đúng cách rollback
+in-request làm.
+
+```csharp
+public sealed class SagaRecoveryService : BackgroundService          // chỉ đăng ký ở provider Hybrid
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        await using var aScope = myScopeFactory.CreateAsyncScope();
+        var aStore = aScope.ServiceProvider.GetRequiredService<ISagaStore>();
+        var aCompensator = aScope.ServiceProvider.GetRequiredService<SagaCompensator>();
+
+        var aUnfinished = await aStore.GetUnfinishedAsync(ct);        // Status in (Started, Compensating, NeedsManualReview)
+        foreach (var aSaga in aUnfinished)
+            await aCompensator.CompensateAsync(aSaga, ct);            // có Pivot → finalize; không → revert
+    }
+}
+```
+
+`GetUnfinishedAsync` lọc theo trạng thái chưa terminal:
+
+```csharp
+public async Task<IReadOnlyList<SagaSnapshot>> GetUnfinishedAsync(CancellationToken ct = default)
+{
+    var started = (int)SagaStatus.Started; var comp = (int)SagaStatus.Compensating; var manual = (int)SagaStatus.NeedsManualReview;
+    var docs = await myContext.SagaInstances.AsNoTracking()
+        .Where(s => s.Status == started || s.Status == comp || s.Status == manual).ToListAsync(ct);
+    return docs.Select(ToSnapshot).ToList();
+}
+```
+
+**Hai nhánh crash, nhờ pivot-guard ở mục 6:**
+- Crash **trước** Pivot (mới trừ kho, order chưa Confirmed): sổ cái chỉ có `DecreaseStock` → `CompensateAsync`
+  replay `RevertStock` → trả kho → nhất quán.
+- Crash **sau** Pivot (order đã Confirmed): sổ cái có `ConfirmOrder(Pivot)` → pivot-guard → **finalize, KHÔNG
+  trả kho** → nhất quán (kho đã trừ + order Confirmed là đúng).
+
+> Khe dư duy nhất: crash **đúng giữa** SQL-commit và lúc enroll Pivot marker (1 write Mongo ngay sau). Cực
+> nhỏ; là cái giá cố hữu của polyglot không-2PC khi đặt sổ cái ở Mongo thay vì marker atomic trong tx SQL.
+
+---
+
+## 8. Lắp ráp DI — ai đăng ký cái gì
+
+### `AddSagaCore()` (Saga.Core) — bộ khung điều phối
+```csharp
+public static IServiceCollection AddSagaCore(this IServiceCollection s)
+{
+    s.AddScoped<SagaContext>();                                   // 1 instance / request → chung SagaId
+    s.AddScoped<IUnitOfWork, SagaUnitOfWork>();                   // cắm port Domain vào saga
+    s.AddScoped<ISagaCompensationRegistry, SagaCompensationRegistry>();
+    s.AddScoped<SagaCompensator>();
+    s.AddHostedService<SagaRecoveryService>();                    // recovery lúc khởi động
+    return s;
+}
+```
+`ISagaStore` và các handler **không** đăng ký ở đây — do project DB cấp.
+
+### `AddMongoSagaInfrastructure()` — Mongo cấp sổ cái + handler
+```csharp
+s.AddScoped<MongoSagaStore>();                                   // concrete (repo cần để gộp transaction)
+s.AddScoped<ISagaStore>(sp => sp.GetRequiredService<MongoSagaStore>());  // cùng instance
+s.AddSagaCompensationHandlers(typeof(DependencyInjection).Assembly);     // auto-quét MỌI handler trong assembly
+```
+
+`AddSagaCompensationHandlers` quét assembly tìm mọi `ISagaCompensationHandler` rồi tự `AddScoped` — thêm
+handler mới **không** phải thêm dòng đăng ký:
+```csharp
+public static IServiceCollection AddSagaCompensationHandlers(this IServiceCollection s, params Assembly[] asms)
+{
+    var t = typeof(ISagaCompensationHandler);
+    foreach (var impl in asms.SelectMany(a => a.GetTypes())
+                             .Where(x => x is { IsAbstract:false, IsInterface:false } && t.IsAssignableFrom(x)))
+        s.TryAddEnumerable(ServiceDescriptor.Scoped(t, impl));   // TryAddEnumerable: chống trùng
+    return s;
+}
+```
+
+### `AddSqlServerSagaInfrastructure()` — SQL chỉ có repo (không có saga state)
+Đăng ký `AppDbContext` (Orders/Payments) + repo. **Không** participant/log/marker nào. `SqlOrderWriteRepository`
+inject `ISagaStore` + `SagaContext` để ghi marker Pivot.
+
+### `Program.cs` — thứ tự gọi
+```csharp
+builder.Services.AddSagaCore();                                  // gọi TRƯỚC
+builder.Services.AddSqlServerSagaInfrastructure(builder.Configuration);
+builder.Services.AddMongoSagaInfrastructure(builder.Configuration);
+```
+
+---
+
+## 9. Thêm bước rollback mới (history, email) — checklist + code mẫu
+
+Ví dụ "ghi user history" (Compensatable):
+
+1. **Viết handler** (tự được auto-quét, không cần đăng ký tay):
+   ```csharp
+   internal sealed class DeleteUserHistoryHandler : ISagaCompensationHandler
+   {
+       public const string Type = "DeleteUserHistory";
+       public string CompensationType => Type;
+       public async Task CompensateAsync(SagaCompensationContext ctx, CancellationToken ct = default)
+       { /* xoá history theo ctx.CompensationData, idempotent */ }
+   }
+   ```
+2. **Enroll bước** tại repo/service làm việc đó (gắn nhãn + data, đặt TRƯỚC Pivot):
+   ```csharp
+   var step = new SagaStepInfo("WriteUserHistory", SagaStepKind.Compensatable,
+       DeleteUserHistoryHandler.Type, JsonSerializer.Serialize(new { historyId }), false);
+   await store.EnrollStepAsync(sagaId, step, ct);
+   ```
+
+Gửi email = `SagaStepKind.RetryableForward`, đặt **sau** Pivot, không undo (đẩy outbox + retry gửi).
+
+**Không đụng tới:** `SagaCompensator`, `Resolve`, `SagaRecoveryService`, `SagaUnitOfWork`, Domain/Application.
+Đó là lý do thiết kế "scale step mà không đập lại".
+
+---
+
+## 10. Bảng tổng kết các kịch bản
+
+| Tình huống | Mongo (kho) | SQL (order) | Sổ cái `saga_instances` | Ai hoàn tác |
 |---|---|---|---|---|
-| Thành công | commit | commit | effect + SagaCommit | (không) |
-| SQL lỗi (còn sống) | commit | rollback | effect, **không** SagaCommit | `RevertAsync` ngay (in-process) |
-| Mongo lỗi | rollback | rollback (pending) | (không) | không cần |
-| Crash giữa 2 commit | commit | chưa commit | effect, **không** SagaCommit | `RevertAsync` lúc khởi động (recovery) |
-| Crash sau SQL commit | commit | commit | effect + SagaCommit | recovery xoá marker, xác nhận Committed |
+| Thành công | commit ngay | commit ngay + marker Pivot | tạo rồi **xoá** (CommitAsync) | (không) |
+| Bước SQL lỗi (còn sống) | commit ngay | rollback (chưa Pivot) | còn `Started`+`DecreaseStock` | `SagaCompensator` → RevertStock (in-process) |
+| Bước Mongo lỗi | tx Mongo tự rollback | chưa tới | chỉ `Started` | không cần (xoá sổ cái) |
+| Crash trước Pivot | commit ngay | chưa commit | `Started`+`DecreaseStock` | recovery → RevertStock |
+| Crash sau Pivot | commit ngay | commit ngay | `Started`+`DecreaseStock`+`Pivot` | recovery → **pivot-guard finalize, không revert** |
+| Compensation fail quá 5 lần | — | — | `NeedsManualReview` | recovery thử lại lần khởi động sau / người vào tay |
 
-Mọi đường đều hội tụ về trạng thái nhất quán; `RevertAsync` idempotent nên chạy lặp vẫn an toàn.
+Mọi đường hội tụ về trạng thái nhất quán; compensation idempotent nên chạy lặp vẫn an toàn.

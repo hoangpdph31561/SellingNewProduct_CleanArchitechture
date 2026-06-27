@@ -4,37 +4,32 @@ using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 namespace SellingNewProduct.Infrastructure.Saga.Core.Persistence;
 
 /// <summary>
-/// The saga's implementation of the domain <see cref="IUnitOfWork"/> port. Begins a saga that
-/// spans every registered <see cref="ISagaParticipant"/> (SQL + Mongo) instead of a single-database
-/// transaction. The domain (e.g. <c>OrderWriteService</c>) keeps calling Begin/Commit/Rollback
-/// exactly as before — only the implementation behind the port changes.
+/// The saga's implementation of the domain <see cref="IUnitOfWork"/> port. The domain (e.g.
+/// <c>OrderWriteService</c>) keeps calling Begin/Commit/Rollback exactly as before — only the meaning
+/// behind the port changes: instead of one database transaction, this opens an ORCHESTRATION SAGA.
+///
+/// Unlike the old pivot design there are no held-open transactions here. Each saga-aware repository
+/// commits to its own database immediately when its step runs and records that step (with its undo
+/// data) in the single <see cref="ISagaStore"/>. Begin just opens the saga; the returned handle
+/// finalizes it (Commit) or replays the recorded compensations (Rollback).
 /// </summary>
 internal sealed class SagaUnitOfWork : IUnitOfWork
 {
     private readonly SagaContext myContext;
-    private readonly IReadOnlyList<ISagaParticipant> myParticipants;
-    private readonly ISagaLog myLog;
+    private readonly ISagaStore myStore;
+    private readonly SagaCompensator myCompensator;
 
-    public SagaUnitOfWork(
-        SagaContext theContext,
-        IEnumerable<ISagaParticipant> theParticipants,
-        ISagaLog theLog)
+    public SagaUnitOfWork(SagaContext theContext, ISagaStore theStore, SagaCompensator theCompensator)
     {
         myContext = theContext;
-        myParticipants = theParticipants.ToList();
-        myLog = theLog;
+        myStore = theStore;
+        myCompensator = theCompensator;
     }
 
     public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken theCancellationToken = default)
     {
-        myContext.Begin();
-
-        foreach (var aParticipant in myParticipants)
-        {
-            await aParticipant.BeginAsync(theCancellationToken);
-        }
-
-        await myLog.StartAsync(myContext.SagaId, theCancellationToken);
-        return new SagaUnitOfWorkTransaction(myContext, myParticipants, myLog);
+        myContext.Begin("OrderWrite");
+        await myStore.StartAsync(myContext.SagaId, myContext.Name, theCancellationToken);
+        return new SagaUnitOfWorkTransaction(myContext, myStore, myCompensator);
     }
 }

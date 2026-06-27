@@ -6,8 +6,8 @@ using SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Repositories.Read;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Repositories.Write;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Saga;
+using SellingNewProduct.Infrastructure.Saga.Core;
 using SellingNewProduct.Infrastructure.Saga.Core.CrossDb;
-using SellingNewProduct.Infrastructure.Saga.Core.Recovery;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 
 namespace SellingNewProduct.Infrastructure.MongoDB.Saga;
@@ -47,13 +47,17 @@ public static class DependencyInjection
         theServices.AddScoped<IEmployeeReadRepository, MongoEmployeeReadRepository>();
         theServices.AddScoped<IUserReadRepository, MongoUserReadRepository>();
 
-        // Saga: MongoDB transaction participant and the catalogue/people directory for SQL read models.
-        theServices.AddScoped<ISagaParticipant, MongoSagaParticipant>();
+        // The catalogue/people directory for the SQL read models.
         theServices.AddScoped<ICrossDbDirectory, MongoCrossDbDirectory>();
 
-        // Durable saga-effect store: written by the product repo, reverted in-process and by recovery.
-        theServices.AddScoped<MongoSagaEffectStore>();
-        theServices.AddScoped<ISagaEffectStore>(sp => sp.GetRequiredService<MongoSagaEffectStore>());
+        // MongoDB owns the single saga ledger. The store is shared by the saga-aware repositories
+        // (so a step commits atomically with its ledger entry), so register the concrete type too.
+        theServices.AddScoped<MongoSagaStore>();
+        theServices.AddScoped<ISagaStore>(sp => sp.GetRequiredService<MongoSagaStore>());
+
+        // Auto-register every ISagaCompensationHandler in THIS assembly (stock today, more later) —
+        // a new handler class is picked up with no extra registration line.
+        theServices.AddSagaCompensationHandlers(typeof(DependencyInjection).Assembly);
 
         return theServices;
     }

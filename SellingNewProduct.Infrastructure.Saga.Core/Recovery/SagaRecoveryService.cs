@@ -6,15 +6,13 @@ using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 namespace SellingNewProduct.Infrastructure.Saga.Core.Recovery;
 
 /// <summary>
-/// Closes the one residual gap a saga cannot close with transactions alone: a crash BETWEEN the two
-/// commits (Mongo committed, the SQL pivot not yet). On startup it reconciles every saga whose Mongo
-/// effect is still pending, using the durable markers as the source of truth:
-/// <list type="bullet">
-/// <item>Mongo effect exists AND SQL commit marker exists → both committed → consistent → clean up.</item>
-/// <item>Mongo effect exists but NO SQL commit marker → interrupted → revert the Mongo stock deltas.</item>
-/// </list>
-/// Runs once at startup, before serving traffic. Every action is idempotent, so a crash mid-recovery
-/// is itself recoverable on the next start.
+/// Closes the gap a saga cannot close with local commits alone: a crash mid-saga, after some steps
+/// committed but before the saga finished. On startup it reads every unfinished saga from the single
+/// <see cref="ISagaStore"/> and hands it to the same <see cref="SagaCompensator"/> the in-request
+/// rollback uses, so an interrupted saga is undone exactly the way a live failure would be.
+///
+/// Runs once before serving traffic. Every compensation is idempotent, so a crash mid-recovery is
+/// itself recoverable on the next start.
 /// </summary>
 public sealed class SagaRecoveryService : BackgroundService
 {
@@ -32,58 +30,34 @@ public sealed class SagaRecoveryService : BackgroundService
         try
         {
             await using var aScope = myScopeFactory.CreateAsyncScope();
-            var aEffectStore = aScope.ServiceProvider.GetRequiredService<ISagaEffectStore>();
-            var aCommitStore = aScope.ServiceProvider.GetRequiredService<ISagaCommitStore>();
-            var aLog = aScope.ServiceProvider.GetRequiredService<ISagaLog>();
+            var aStore = aScope.ServiceProvider.GetRequiredService<ISagaStore>();
+            var aCompensator = aScope.ServiceProvider.GetRequiredService<SagaCompensator>();
 
-            var aPending = await aEffectStore.GetPendingSagaIdsAsync(theStoppingToken);
-            if (aPending.Count == 0)
+            var aUnfinished = await aStore.GetUnfinishedAsync(theStoppingToken);
+            if (aUnfinished.Count == 0)
             {
                 return;
             }
 
-            myLogger.LogInformation("Saga recovery: reconciling {Count} pending saga(s).", aPending.Count);
+            myLogger.LogInformation("Saga recovery: reconciling {Count} unfinished saga(s).", aUnfinished.Count);
 
-            foreach (var aSagaId in aPending)
+            foreach (var aSaga in aUnfinished)
             {
-                await ReconcileAsync(aSagaId, aEffectStore, aCommitStore, aLog, theStoppingToken);
+                try
+                {
+                    await aCompensator.CompensateAsync(aSaga, theStoppingToken);
+                }
+                catch (Exception aException)
+                {
+                    // One bad saga must not stop the rest; it stays in the store for the next start.
+                    myLogger.LogError(aException, "Saga {SagaId}: recovery failed; will retry on next startup.", aSaga.SagaId);
+                }
             }
         }
         catch (Exception aException)
         {
             // Never let recovery crash startup; the next start will retry (everything is idempotent).
             myLogger.LogError(aException, "Saga recovery failed; will retry on next startup.");
-        }
-    }
-
-    private async Task ReconcileAsync(
-        Guid theSagaId,
-        ISagaEffectStore theEffectStore,
-        ISagaCommitStore theCommitStore,
-        ISagaLog theLog,
-        CancellationToken theCancellationToken)
-    {
-        try
-        {
-            if (await theCommitStore.ExistsAsync(theSagaId, theCancellationToken))
-            {
-                // Pivot committed too → the saga actually succeeded → just drop the markers.
-                await theEffectStore.RemoveAsync(theSagaId, theCancellationToken);
-                await theCommitStore.RemoveAsync(theSagaId, theCancellationToken);
-                await theLog.CompleteAsync(theSagaId, SagaStatus.Committed, Array.Empty<string>(), theCancellationToken);
-                myLogger.LogInformation("Saga {SagaId}: confirmed committed on both stores.", theSagaId);
-            }
-            else
-            {
-                // Mongo committed but the SQL pivot did not → undo the orphaned stock change.
-                await theEffectStore.RevertAsync(theSagaId, theCancellationToken);
-                await theLog.CompleteAsync(theSagaId, SagaStatus.Compensated, Array.Empty<string>(), theCancellationToken);
-                myLogger.LogWarning("Saga {SagaId}: pivot never committed; Mongo effect reverted.", theSagaId);
-            }
-        }
-        catch (Exception aException)
-        {
-            myLogger.LogError(aException, "Saga {SagaId}: recovery step failed; will retry on next startup.", theSagaId);
         }
     }
 }

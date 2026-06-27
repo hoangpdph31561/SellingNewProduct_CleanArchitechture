@@ -54,12 +54,12 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<ProductDoc
     }
 }
 
-internal sealed class SagaEffectConfiguration : IEntityTypeConfiguration<SagaEffectDocument>
+internal sealed class SagaInstanceConfiguration : IEntityTypeConfiguration<SagaInstanceDocument>
 {
-    public void Configure(EntityTypeBuilder<SagaEffectDocument> theBuilder)
+    public void Configure(EntityTypeBuilder<SagaInstanceDocument> theBuilder)
     {
-        theBuilder.ToCollection("saga_effects");
+        theBuilder.ToCollection("saga_instances");
         theBuilder.HasKey(x => x.Id);
-        theBuilder.OwnsMany(x => x.Deltas);
+        theBuilder.OwnsMany(x => x.Steps);
     }
 }
