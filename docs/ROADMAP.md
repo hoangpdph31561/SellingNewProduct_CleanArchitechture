@@ -209,6 +209,49 @@ dotnet run --project SellingNewProduct.API
 - [x] `dotnet build` PASS (0 error, 0 warning). **Docs cập nhật toàn bộ** (README, ARCHITECTURE, CONVENTIONS,
       DOMAIN_MODEL, code/01-06, code/README).
 
+## Phase 12 — Outbox + Kafka + RabbitMQ (event-driven side effects) ✅ (2026-07-04)
+> Theo yêu cầu user: thêm Outbox pattern, Kafka, RabbitMQ kết hợp Saga; thêm nhiều event + step +
+> method (gửi mail xác nhận, thông báo trạng thái, analytics async, phát hành hoá đơn). Dùng **cả 2
+> broker theo thế mạnh** (không toggle config): Kafka = event backbone; RabbitMQ = command/work queue.
+- [x] **Domain events mở rộng**: `OrderPlacedEvent`, `OrderShippedEvent`, `OrderCancelledEvent`,
+      `PaymentCompletedEvent`; enrich `OrderConfirmedEvent` (Total+Currency). Raise trong aggregate
+      (Order.MarkPlaced/Confirm/MarkShipped/Cancel, Payment.MarkCompleted). `OrderWriteService.PlaceAsync`
+      gọi `MarkPlaced()`.
+- [x] **Project mới `SellingNewProduct.Infrastructure.Messaging`** (Confluent.Kafka 2.6.1, RabbitMQ.Client
+      7.0.0): contracts (integration event + command), `IEventBus`(Kafka)/`ICommandBus`(RabbitMQ)/`IOutboxStore`,
+      `OutboxDispatcher`, Kafka bus+consumer host, RabbitMQ bus+consumer host (DLQ+retry), process managers
+      (Kafka→Rabbit), workers, gateway giả lập (email/invoice/notification) + analytics in-memory.
+- [x] **Transactional Outbox ở SQL.Saga**: `OutboxMessageRecord` + config + migration `AddOutboxMessages`;
+      `OutboxWriter` stage event vào CÙNG transaction pivot (SQL Order/Payment); `SqlOutboxStore` cho
+      dispatcher poll. Order repo ghi thêm saga step `PublishOrderEvents` (RetryableForward) để truy vết.
+- [x] **Wiring**: `AddMessaging()` chỉ cho provider Hybrid/Saga; appsettings thêm `Kafka`/`RabbitMq`;
+      `docker-compose.messaging.yml` (Kafka KRaft + Kafka-UI + RabbitMQ management). App **chịu lỗi** khi
+      broker tắt (outbox retry, consumer reconnect).
+- [x] `dotnet build` PASS (0 error). Docs: `docs/outbox-kafka-rabbitmq.md`.
+- **Còn mở (tuỳ chọn)**: tách consumer thành microservice thật (mỗi consumer group 1 service); resolve
+      email/contact thật thay vì synthesize; outbox cho provider SqlServer/MongoDB thuần nếu cần.
+
+## Phase 13 — Route-at-source + Mongo outbox (sửa kiến trúc messaging) ✅ (2026-07-05)
+> Theo phản hồi user: (1) KHÔNG funnel mọi thứ qua Kafka rồi mới sang RabbitMQ — mỗi broker tự xử lý
+> theo thế mạnh, định tuyến TẠI NGUỒN; (2) MongoDB/Product cũng phải tham gia messaging, không chỉ Order.
+- [x] **`OutboxRouter`** (`Infrastructure.Saga.Core/Outbox/`) — policy dùng chung: 1 domain event →
+      danh sách `OutboxEntry`, mỗi entry gắn `OutboxDestination` (Kafka=fact / RabbitMq=command). Thay
+      `OutboxEventTranslator`. Đăng ký ở `AddSagaCore` (singleton).
+- [x] **Outbox mang `Destination`**: `OutboxMessageRecord`/`OutboxMessageDocument` đổi field
+      `Topic/EventType` → `Destination/Route/MessageType`. Migration `AddOutboxMessages` regenerate.
+- [x] **Dispatcher route thẳng**: `OutboxDispatcher` poll `IEnumerable<IOutboxStore>` (drain CẢ SQL +
+      Mongo), route theo `Destination` → `IEventBus`(Kafka) hoặc `ICommandPublisher`(RabbitMQ). **Bỏ**
+      process manager Kafka→Rabbit (`OrderNotificationProcessManager`, `InvoiceProcessManager`).
+- [x] **`ICommandBus` → `ICommandPublisher`** (raw publish theo queue); `RabbitMqCommandBus` →
+      `RabbitMqCommandPublisher`. Kafka consumer giờ chỉ còn `AnalyticsProjectionHandler` (đọc fact).
+- [x] **Mongo outbox**: `ProductStockChangedEvent` (Domain) raise trong Increase/DecreaseStock;
+      `OutboxMessageDocument` + collection `outbox_messages` + `MongoOutboxStore`/`MongoOutboxWriter`;
+      stage trong transaction Mongo của `MongoProductWriteRepository`. Event `products.events` +
+      command `restock.alert` (khi hết hàng).
+- [x] `dotnet build` PASS (0 error, 0 warning). Fix kèm: `Microsoft.OpenApi` 3.7.0→**2.9.0** (3.x làm
+      `IOpenApiMediaType.Schema` read-only, vỡ `ApiResponseOperationTransformer` + source generator).
+- [x] Docs cập nhật: `outbox-kafka-rabbitmq.md`, `outbox-kafka-rabbitmq-walkthrough.md`.
+
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
 - [x] ~~Có cần Unit of Work / transaction rõ ràng không?~~ → **ĐÃ LÀM** ở Phase 11 (`IUnitOfWork`).
 - [ ] Seed dữ liệu mẫu để demo nhanh? (đề xuất: có)

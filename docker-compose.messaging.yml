@@ -1,0 +1,58 @@
+# Message brokers for the Saga/Hybrid provider's event-driven side effects.
+#
+#   Kafka    = the event backbone (durable, replayable log; many independent consumer groups).
+#   RabbitMQ = the command/work queue (per-message ack, retry, dead-letter).
+#
+# Start:  docker compose -f docker-compose.messaging.yml up -d
+# Stop:   docker compose -f docker-compose.messaging.yml down       (add -v to wipe data)
+#
+# UIs:    Kafka-UI       http://localhost:8085
+#         RabbitMQ mgmt  http://localhost:15672   (guest / guest)
+#
+# The API still starts if these are down: the outbox keeps retrying to publish and the consumers
+# reconnect automatically. See docs/outbox-kafka-rabbitmq.md.
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: snp-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Two broker listeners: HOST (advertised as localhost:9092) for the app running on your machine,
+      # and DOCKER (advertised as kafka:29092) for other containers such as kafka-ui.
+      KAFKA_LISTENERS: HOST://:9092,DOCKER://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,HOST:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: snp-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: snp-rabbitmq
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest

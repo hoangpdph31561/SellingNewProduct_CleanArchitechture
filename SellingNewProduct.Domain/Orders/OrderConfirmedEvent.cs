@@ -9,12 +9,18 @@ public sealed class OrderConfirmedEvent : IDomainEvent
 
     public Guid CustomerId { get; }
 
+    public decimal TotalAmount { get; }
+
+    public string Currency { get; }
+
     public DateTime OccurredOnUtc { get; }
 
-    public OrderConfirmedEvent(Guid theOrderId, Guid theCustomerId)
+    public OrderConfirmedEvent(Guid theOrderId, Guid theCustomerId, decimal theTotalAmount, string theCurrency)
     {
         OrderId = theOrderId;
         CustomerId = theCustomerId;
+        TotalAmount = theTotalAmount;
+        Currency = theCurrency;
         OccurredOnUtc = DateTime.UtcNow;
     }
 }

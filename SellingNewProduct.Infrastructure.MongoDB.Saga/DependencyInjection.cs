@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SellingNewProduct.Domain.Interfaces.Outbound;
+using SellingNewProduct.Infrastructure.Messaging.Abstractions;
+using SellingNewProduct.Infrastructure.MongoDB.Saga.Outbox;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Repositories.Read;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Repositories.Write;
@@ -54,6 +56,12 @@ public static class DependencyInjection
         // (so a step commits atomically with its ledger entry), so register the concrete type too.
         theServices.AddScoped<MongoSagaStore>();
         theServices.AddScoped<ISagaStore>(sp => sp.GetRequiredService<MongoSagaStore>());
+
+        // The catalogue's transactional outbox: the writer stages stock-change events into the same
+        // Mongo transaction, and the store is drained by the shared OutboxDispatcher (as an ADDITIONAL
+        // IOutboxStore alongside the SQL one).
+        theServices.AddScoped<MongoOutboxWriter>();
+        theServices.AddScoped<IOutboxStore, MongoOutboxStore>();
 
         // Auto-register every ISagaCompensationHandler in THIS assembly (stock today, more later) —
         // a new handler class is picked up with no extra registration line.

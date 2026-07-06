@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SellingNewProduct.Domain.Payments;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Mapping;
+using SellingNewProduct.Infrastructure.SqlServer.Saga.Outbox;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Persistence;
 
 namespace SellingNewProduct.Infrastructure.SqlServer.Saga.Repositories.Write;
@@ -9,10 +10,12 @@ namespace SellingNewProduct.Infrastructure.SqlServer.Saga.Repositories.Write;
 internal sealed class SqlPaymentWriteRepository : IPaymentWriteRepository
 {
     private readonly AppDbContext myAppDbContext;
+    private readonly OutboxWriter myOutboxWriter;
 
-    public SqlPaymentWriteRepository(AppDbContext theAppDbContext)
+    public SqlPaymentWriteRepository(AppDbContext theAppDbContext, OutboxWriter theOutboxWriter)
     {
         myAppDbContext = theAppDbContext;
+        myOutboxWriter = theOutboxWriter;
     }
 
     public async Task<Payment?> GetByIdAsync(Guid theId, CancellationToken theCancellationToken = default)
@@ -50,6 +53,9 @@ internal sealed class SqlPaymentWriteRepository : IPaymentWriteRepository
         }
 
         PaymentMapper.MapInto(aRecord, thePayment);
+
+        // Stage the PaymentCompleted event atomically with the payment update.
+        myOutboxWriter.Stage(thePayment);
         await myAppDbContext.SaveChangesAsync(theCancellationToken);
     }
 }

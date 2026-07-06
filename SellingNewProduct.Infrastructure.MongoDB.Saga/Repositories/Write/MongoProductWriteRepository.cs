@@ -4,6 +4,7 @@ using SellingNewProduct.Domain.Common;
 using SellingNewProduct.Domain.Products;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Mapping;
+using SellingNewProduct.Infrastructure.MongoDB.Saga.Outbox;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Saga;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
@@ -29,15 +30,18 @@ internal sealed class MongoProductWriteRepository : IProductWriteRepository
     private readonly MongoAppDbContext myMongoAppDbContext;
     private readonly SagaContext mySagaContext;
     private readonly MongoSagaStore mySagaStore;
+    private readonly MongoOutboxWriter myOutboxWriter;
 
     public MongoProductWriteRepository(
         MongoAppDbContext theMongoAppDbContext,
         SagaContext theSagaContext,
-        MongoSagaStore theSagaStore)
+        MongoSagaStore theSagaStore,
+        MongoOutboxWriter theOutboxWriter)
     {
         myMongoAppDbContext = theMongoAppDbContext;
         mySagaContext = theSagaContext;
         mySagaStore = theSagaStore;
+        myOutboxWriter = theOutboxWriter;
     }
 
     public async Task<IReadOnlyList<Product>> GetByIdsAsync(IReadOnlyCollection<Guid> theIds, CancellationToken theCancellationToken = default)
@@ -120,6 +124,11 @@ internal sealed class MongoProductWriteRepository : IProductWriteRepository
 
         await using var aTransaction = await myMongoAppDbContext.Database.BeginTransactionAsync(theCancellationToken);
         await mySagaStore.StageStepAsync(mySagaContext.SagaId, aStep, theCancellationToken);
+
+        // Stage the products' stock-change events (fact→Kafka, restock command→RabbitMQ) into the SAME
+        // Mongo transaction, so the stock change and its outbox rows commit atomically.
+        myOutboxWriter.Stage(aProducts);
+
         await myMongoAppDbContext.SaveChangesAsync(theCancellationToken);
         await aTransaction.CommitAsync(theCancellationToken);
     }

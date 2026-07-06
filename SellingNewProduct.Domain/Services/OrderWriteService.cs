@@ -75,6 +75,9 @@ public sealed class OrderWriteService : IOrderWriteService
             aOrder.AddDetail(aProduct, aLine.Quantity);
         }
 
+        // All lines are attached, so the total is final — announce the placement now.
+        aOrder.MarkPlaced();
+
         await myOrderRepository.AddAsync(aOrder, theCancellationToken);
         return aOrder;
     }

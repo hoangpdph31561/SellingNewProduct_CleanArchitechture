@@ -104,6 +104,7 @@ public sealed class Product : AggregateRoot<Guid>
 
         StockQuantity += theQuantity;
         MarkUpdated();
+        Raise(new ProductStockChangedEvent(Id, Name, StockQuantity, theQuantity));
     }
 
     public void DecreaseStock(int theQuantity)
@@ -120,6 +121,7 @@ public sealed class Product : AggregateRoot<Guid>
 
         StockQuantity -= theQuantity;
         MarkUpdated();
+        Raise(new ProductStockChangedEvent(Id, Name, StockQuantity, -theQuantity));
     }
 
     public static Product Rehydrate(

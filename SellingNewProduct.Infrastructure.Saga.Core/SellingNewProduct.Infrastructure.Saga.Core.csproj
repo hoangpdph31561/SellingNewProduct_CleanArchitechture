@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SellingNewProduct.Domain\SellingNewProduct.Domain.csproj" />
+    <ProjectReference Include="..\SellingNewProduct.Infrastructure.Messaging\SellingNewProduct.Infrastructure.Messaging.csproj" />
   </ItemGroup>
 
   <ItemGroup>

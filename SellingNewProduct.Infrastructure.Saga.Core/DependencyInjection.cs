@@ -23,6 +23,11 @@ public static class DependencyInjection
         theServices.AddScoped<SagaContext>();
         theServices.AddScoped<IUnitOfWork, SagaUnitOfWork>();
 
+        // The source-of-truth routing policy (domain event → outbox entries). Both the SQL and the
+        // MongoDB outbox writers use it, so both databases route facts→Kafka / commands→RabbitMQ the
+        // same way. Depends only on the messaging registries (singletons).
+        theServices.AddSingleton<Outbox.OutboxRouter>();
+
         // Undo machinery: registry of compensation handlers + the shared retrying compensator.
         theServices.AddScoped<ISagaCompensationRegistry, SagaCompensationRegistry>();
         theServices.AddScoped<SagaCompensator>();

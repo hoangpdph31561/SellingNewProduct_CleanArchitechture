@@ -10,6 +10,7 @@
     <PackageReference Include="FluentValidation" Version="12.1.1" />
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.6" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.9.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,6 +19,7 @@
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.SqlServer\SellingNewProduct.Infrastructure.SqlServer.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.MongoDB\SellingNewProduct.Infrastructure.MongoDB.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.Saga.Core\SellingNewProduct.Infrastructure.Saga.Core.csproj" />
+    <ProjectReference Include="..\SellingNewProduct.Infrastructure.Messaging\SellingNewProduct.Infrastructure.Messaging.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.SqlServer.Saga\SellingNewProduct.Infrastructure.SqlServer.Saga.csproj" />
     <ProjectReference Include="..\SellingNewProduct.Infrastructure.MongoDB.Saga\SellingNewProduct.Infrastructure.MongoDB.Saga.csproj" />
   </ItemGroup>

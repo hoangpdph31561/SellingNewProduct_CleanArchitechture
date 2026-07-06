@@ -63,3 +63,12 @@ internal sealed class SagaInstanceConfiguration : IEntityTypeConfiguration<SagaI
         theBuilder.OwnsMany(x => x.Steps);
     }
 }
+
+internal sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessageDocument>
+{
+    public void Configure(EntityTypeBuilder<OutboxMessageDocument> theBuilder)
+    {
+        theBuilder.ToCollection("outbox_messages");
+        theBuilder.HasKey(x => x.Id);
+    }
+}

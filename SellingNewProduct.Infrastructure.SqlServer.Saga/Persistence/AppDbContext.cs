@@ -20,11 +20,16 @@ public sealed class AppDbContext : DbContext
     internal DbSet<OrderDetailRecord> OrderDetails => Set<OrderDetailRecord>();
     internal DbSet<PaymentRecord> Payments => Set<PaymentRecord>();
 
+    // The transactional outbox. It lives in the SAME context so an event row commits atomically with
+    // the Order/Payment write that raised it — the guarantee the whole outbox pattern rests on.
+    internal DbSet<OutboxMessageRecord> OutboxMessages => Set<OutboxMessageRecord>();
+
     protected override void OnModelCreating(ModelBuilder theModelBuilder)
     {
         theModelBuilder.ApplyConfiguration(new OrderConfiguration());
         theModelBuilder.ApplyConfiguration(new OrderDetailConfiguration());
         theModelBuilder.ApplyConfiguration(new PaymentConfiguration());
+        theModelBuilder.ApplyConfiguration(new OutboxMessageConfiguration());
         base.OnModelCreating(theModelBuilder);
     }
 }

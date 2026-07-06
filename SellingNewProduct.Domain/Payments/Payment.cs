@@ -56,6 +56,7 @@ public sealed class Payment : AggregateRoot<Guid>
         PaymentStatus = PaymentStatus.Completed;
         PaidAtUtc = DateTime.UtcNow;
         MarkUpdated();
+        Raise(new PaymentCompletedEvent(Id, OrderId, Amount.Amount, Amount.Currency));
     }
 
     public void Refund()

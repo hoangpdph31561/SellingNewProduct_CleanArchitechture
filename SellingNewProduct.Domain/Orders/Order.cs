@@ -109,7 +109,16 @@ public sealed class Order : AggregateRoot<Guid>
 
         OrderStatus = OrderStatus.Confirmed;
         MarkUpdated();
-        Raise(new OrderConfirmedEvent(Id, CustomerId));
+        Raise(new OrderConfirmedEvent(Id, CustomerId, TotalAmount.Amount, TotalAmount.Currency));
+    }
+
+    /// <summary>
+    /// Signals that the order has been fully placed (created with all its lines). Raised by the
+    /// domain service once the details are attached, so the event carries the real total.
+    /// </summary>
+    public void MarkPlaced()
+    {
+        Raise(new OrderPlacedEvent(Id, CustomerId, EmployeeId, TotalAmount.Amount, TotalAmount.Currency));
     }
 
     public void MarkShipped()
@@ -121,6 +130,7 @@ public sealed class Order : AggregateRoot<Guid>
 
         OrderStatus = OrderStatus.Shipped;
         MarkUpdated();
+        Raise(new OrderShippedEvent(Id, CustomerId));
     }
 
     public void Cancel()
@@ -135,8 +145,11 @@ public sealed class Order : AggregateRoot<Guid>
             throw new DomainException("Order is already cancelled.");
         }
 
+        var aWasConfirmed = OrderStatus == OrderStatus.Confirmed;
+
         OrderStatus = OrderStatus.Cancelled;
         MarkUpdated();
+        Raise(new OrderCancelledEvent(Id, CustomerId, aWasConfirmed));
     }
 
     private void EnsureDraft()

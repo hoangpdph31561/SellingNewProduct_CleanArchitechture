@@ -25,6 +25,9 @@ public abstract class MongoDbContextBase : DbContext
     // The single durable saga ledger (one document per saga). Drives rollback and crash recovery.
     internal DbSet<SagaInstanceDocument> SagaInstances => Set<SagaInstanceDocument>();
 
+    // The MongoDB-side transactional outbox (catalogue events, e.g. stock movements).
+    internal DbSet<OutboxMessageDocument> OutboxMessages => Set<OutboxMessageDocument>();
+
     protected override void OnModelCreating(ModelBuilder theModelBuilder)
     {
         theModelBuilder.ApplyConfigurationsFromAssembly(typeof(MongoDbContextBase).Assembly);

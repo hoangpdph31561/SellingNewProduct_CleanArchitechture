@@ -6,6 +6,7 @@ using SellingNewProduct.Infrastructure.SqlServer;
 using SellingNewProduct.Infrastructure.Saga.Core;
 using SellingNewProduct.Infrastructure.SqlServer.Saga;
 using SellingNewProduct.Infrastructure.MongoDB.Saga;
+using SellingNewProduct.Infrastructure.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +32,12 @@ else if (string.Equals(aProvider, "Hybrid", StringComparison.OrdinalIgnoreCase)
     builder.Services.AddSagaCore();
     builder.Services.AddSqlServerSagaInfrastructure(builder.Configuration);
     builder.Services.AddMongoSagaInfrastructure(builder.Configuration);
+
+    // Event-driven side effects: the SQL side writes domain events to a transactional outbox; this
+    // relays them onto Kafka (the event backbone), where process managers turn facts into RabbitMQ
+    // work commands (send email, issue invoice, notify) and an analytics projection reads the same
+    // log independently. See docs/outbox-kafka-rabbitmq.md.
+    builder.Services.AddMessaging(builder.Configuration);
 }
 else
 {
