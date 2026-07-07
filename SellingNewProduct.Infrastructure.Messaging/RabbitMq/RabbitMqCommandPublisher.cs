@@ -22,7 +22,7 @@ public sealed class RabbitMqCommandPublisher : ICommandPublisher
         myConnectionProvider = theConnectionProvider;
         myLogger = theLogger;
     }
-
+    //RabbitMqCommandPublisher.PublishAsync là bên GỬI của RabbitMQ — nó đặt một command vào queue. Đối xứng với RabbitMqConsumerHostedService
     public async Task PublishAsync(string theQueue, string theCommandType, string thePayloadJson, CancellationToken theCancellationToken = default)
     {
         var aBody = Encoding.UTF8.GetBytes(thePayloadJson);

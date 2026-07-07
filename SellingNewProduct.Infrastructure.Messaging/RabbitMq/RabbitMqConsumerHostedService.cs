@@ -41,7 +41,7 @@ public sealed class RabbitMqConsumerHostedService : BackgroundService
         mySettings = theSettings.Value;
         myLogger = theLogger;
     }
-
+    //bên NHẬN. Vai trò của nó không phải xử lý message, mà là "người giám sát" (supervisor): dựng consumer → ngồi canh → hỏng/mất kết nối thì dựng lại → app tắt thì dọn dẹp.
     protected override async Task ExecuteAsync(CancellationToken theStoppingToken)
     {
         while (!theStoppingToken.IsCancellationRequested)
@@ -75,24 +75,30 @@ public sealed class RabbitMqConsumerHostedService : BackgroundService
 
     private async Task StartConsumersAsync(CancellationToken theCancellationToken)
     {
+        // (1) xoá sạch channel cũ trước khi dựng mới
         await CloseChannelsAsync();
 
+        // (2) lấy connection 
         var aConnection = await myConnectionProvider.GetConnectionAsync(theCancellationToken);
 
         // One channel just to declare the shared exchanges.
         await using (var aSetup = await aConnection.CreateChannelAsync(cancellationToken: theCancellationToken))
         {
+            //4 exchange chính
             await aSetup.ExchangeDeclareAsync(MessagingQueues.Exchange, ExchangeType.Direct, durable: true, cancellationToken: theCancellationToken);
+            //5 DLX
             await aSetup.ExchangeDeclareAsync(MessagingQueues.DeadLetterExchange, ExchangeType.Direct, durable: true, cancellationToken: theCancellationToken);
         }
-
+        //MỖI QUEUE — dựng topology + treo consumer
         foreach (var aQueue in myRegistry.Queues)
         {
             var aChannel = await aConnection.CreateChannelAsync(cancellationToken: theCancellationToken);
+            //9 khai queue chính + DLQ + 2 binding
             await DeclareQueueTopologyAsync(aChannel, aQueue, theCancellationToken);
 
             // Prefetch 1 keeps in-flight work at one per queue, so the retry loop below can own the
             // channel without concurrent deliveries racing on the same ack.
+            //10 mỗi lúc chỉ nhận 1 message
             await aChannel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false, cancellationToken: theCancellationToken);
 
             var aConsumer = new AsyncEventingBasicConsumer(aChannel);
@@ -125,6 +131,7 @@ public sealed class RabbitMqConsumerHostedService : BackgroundService
 
     private async Task OnMessageAsync(IChannel theChannel, string theQueue, BasicDeliverEventArgs theArgs, CancellationToken theCancellationToken)
     {
+        // (1) tra closure của queue này
         var aRegistration = myRegistry.ByQueue(theQueue);
         if (aRegistration is null)
         {
@@ -138,9 +145,10 @@ public sealed class RabbitMqConsumerHostedService : BackgroundService
         {
             try
             {
+                // (5) scope MỚI mỗi lần thử
                 await using var aScope = myScopeFactory.CreateAsyncScope();
                 await aRegistration.Dispatch(aScope.ServiceProvider, aPayload, theCancellationToken);
-
+                // (7) OK → ACK, xong báo RabbitMQ "xử lý xong, xoá message khỏi queue"
                 await theChannel.BasicAckAsync(theArgs.DeliveryTag, multiple: false, theCancellationToken);
                 return;
             }
