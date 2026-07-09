@@ -252,6 +252,24 @@ dotnet run --project SellingNewProduct.API
       `IOpenApiMediaType.Schema` read-only, vỡ `ApiResponseOperationTransformer` + source generator).
 - [x] Docs cập nhật: `outbox-kafka-rabbitmq.md`, `outbox-kafka-rabbitmq-walkthrough.md`.
 
+## Phase 14 — Resilience (Polly) + gateway thật + VNPay ✅ (2026-07-09)
+> Thêm khả năng chịu lỗi cho các lời gọi RA NGOÀI tiến trình, và biến gateway giả (log) thành thật.
+> Dự án là **monolith** (không phải microservice) — circuit breaker đặt ở ranh giới out-of-process.
+- [x] **Circuit breaker (Polly v8)** cho: (a) gateway hạ nguồn qua RabbitMQ worker
+      (`Infrastructure.Messaging/Resilience/DownstreamResilience.cs`); (b) đọc chéo store
+      `ICrossDbDirectory`/`ICrossDbOrderStats` với decorator + **fallback** "(unknown)"/0
+      (`Infrastructure.Saga.Core/Resilience/CrossStoreResilience.cs`, `CrossDb/ResilientCrossDbAdapters.cs`).
+      Quy tắc: chỉ bọc **read idempotent**, KHÔNG bọc saga write. Doc: **`docs/polly-circuit-breaker.md`**.
+- [x] **Email thật**: `SmtpEmailSender` (MailKit) — chọn qua `Gateways:UseReal`. Doc: **`docs/gateway-email-smtp.md`**.
+- [x] **Invoice PDF thật**: `PdfInvoiceIssuer` (QuestPDF). Doc: **`docs/gateway-invoice-pdf.md`**.
+- [x] **VNPay** (project mới `Infrastructure.Payments`): port `IPaymentGateway` (Domain), adapter ký
+      HMAC-SHA512 + verify chữ ký; endpoint `POST api/payments/vnpay/create` + `GET api/payments/vnpay-return`.
+      Return → `CompletePaymentByOrderCommand` → `CompleteByOrderAsync` **idempotent** (chịu callback lặp
+      return/IPN). Doc: **`docs/gateway-vnpay.md`**.
+- [x] `dotnet build` PASS toàn bộ (email cảnh báo `NU1902` MailKit/MimeKit — chưa có bản vá, chỉ warning).
+- **Còn mở (tuỳ chọn)**: tạo payment Pending ngay ở `vnpay/create`; đổi `vnp_TxnRef` sang PaymentId nếu 1
+      đơn có nhiều payment online; endpoint IPN riêng; email thật cho notification/restock.
+
 ## Câu hỏi còn mở (cần người dùng quyết khi tới)
 - [x] ~~Có cần Unit of Work / transaction rõ ràng không?~~ → **ĐÃ LÀM** ở Phase 11 (`IUnitOfWork`).
 - [ ] Seed dữ liệu mẫu để demo nhanh? (đề xuất: có)

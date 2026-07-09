@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.Messaging.Abstractions;
 using SellingNewProduct.Infrastructure.Saga.Core.CrossDb;
+using SellingNewProduct.Infrastructure.Saga.Core.Resilience;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Outbox;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Persistence;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Repositories.Read;
@@ -41,8 +43,14 @@ public static class DependencyInjection
         theServices.AddScoped<IPaymentReadRepository, SqlPaymentReadRepository>();
         theServices.AddScoped<IReportReadRepository, SqlReportReadRepository>();
 
-        // SQL-backed order statistics consumed by the MongoDB people read models (cycle-free leaf).
-        theServices.AddScoped<ICrossDbOrderStats, SqlCrossDbOrderStats>();
+        // SQL-backed order statistics consumed by the MongoDB people read models (cycle-free leaf),
+        // wrapped in the cross-store circuit breaker: if SQL is unhealthy the breaker trips and the
+        // people read models fall back to zero/empty stats instead of failing (decorator pattern).
+        theServices.AddScoped<SqlCrossDbOrderStats>();
+        theServices.AddScoped<ICrossDbOrderStats>(sp => new ResilientCrossDbOrderStats(
+            sp.GetRequiredService<SqlCrossDbOrderStats>(),
+            sp.GetRequiredService<CrossStorePipeline>(),
+            sp.GetRequiredService<ILogger<ResilientCrossDbOrderStats>>()));
 
         // Transactional outbox: the writer stages event rows into the pivot's own transaction, and the
         // store is what the messaging OutboxDispatcher polls. The SQL DB owns the outbox table here.

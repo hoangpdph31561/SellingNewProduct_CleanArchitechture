@@ -2,10 +2,9 @@
   <Project Path="SellingNewProduct.API/SellingNewProduct.API.csproj" />
   <Project Path="SellingNewProduct.Application/SellingNewProduct.Application.csproj" />
   <Project Path="SellingNewProduct.Domain/SellingNewProduct.Domain.csproj" />
-  <Project Path="SellingNewProduct.Infrastructure.MongoDB.Saga/SellingNewProduct.Infrastructure.MongoDB.Saga.csproj" />
-  <Project Path="SellingNewProduct.Infrastructure.MongoDB/SellingNewProduct.Infrastructure.MongoDB.csproj" />
   <Project Path="SellingNewProduct.Infrastructure.Messaging/SellingNewProduct.Infrastructure.Messaging.csproj" />
+  <Project Path="SellingNewProduct.Infrastructure.MongoDB.Saga/SellingNewProduct.Infrastructure.MongoDB.Saga.csproj" />
+  <Project Path="SellingNewProduct.Infrastructure.Payments/SellingNewProduct.Infrastructure.Payments.csproj" />
   <Project Path="SellingNewProduct.Infrastructure.Saga.Core/SellingNewProduct.Infrastructure.Saga.Core.csproj" />
   <Project Path="SellingNewProduct.Infrastructure.SqlServer.Saga/SellingNewProduct.Infrastructure.SqlServer.Saga.csproj" />
-  <Project Path="SellingNewProduct.Infrastructure.SqlServer/SellingNewProduct.Infrastructure.SqlServer.csproj" />
 </Solution>

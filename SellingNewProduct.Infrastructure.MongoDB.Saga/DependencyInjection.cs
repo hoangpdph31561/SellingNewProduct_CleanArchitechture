@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.Messaging.Abstractions;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Outbox;
@@ -10,6 +11,7 @@ using SellingNewProduct.Infrastructure.MongoDB.Saga.Repositories.Write;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Saga;
 using SellingNewProduct.Infrastructure.Saga.Core;
 using SellingNewProduct.Infrastructure.Saga.Core.CrossDb;
+using SellingNewProduct.Infrastructure.Saga.Core.Resilience;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 
 namespace SellingNewProduct.Infrastructure.MongoDB.Saga;
@@ -49,8 +51,14 @@ public static class DependencyInjection
         theServices.AddScoped<IEmployeeReadRepository, MongoEmployeeReadRepository>();
         theServices.AddScoped<IUserReadRepository, MongoUserReadRepository>();
 
-        // The catalogue/people directory for the SQL read models.
-        theServices.AddScoped<ICrossDbDirectory, MongoCrossDbDirectory>();
+        // The catalogue/people directory for the SQL read models, wrapped in the cross-store circuit
+        // breaker: if MongoDB is unhealthy the breaker trips and SQL order reads degrade to "(unknown)"
+        // names instead of failing outright. The concrete adapter stays MongoDB-only (decorator pattern).
+        theServices.AddScoped<MongoCrossDbDirectory>();
+        theServices.AddScoped<ICrossDbDirectory>(sp => new ResilientCrossDbDirectory(
+            sp.GetRequiredService<MongoCrossDbDirectory>(),
+            sp.GetRequiredService<CrossStorePipeline>(),
+            sp.GetRequiredService<ILogger<ResilientCrossDbDirectory>>()));
 
         // MongoDB owns the single saga ledger. The store is shared by the saga-aware repositories
         // (so a step commits atomically with its ledger entry), so register the concrete type too.

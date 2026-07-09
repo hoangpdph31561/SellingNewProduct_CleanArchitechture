@@ -82,4 +82,33 @@ public sealed class PaymentWriteService : IPaymentWriteService
         await myPaymentRepository.UpdateAsync(aPayment, theCancellationToken);
         return aPayment;
     }
+
+    /// <summary>
+    /// Completes the pending payment of an order — used by a payment-gateway callback that only knows
+    /// the order id. Idempotent by design: a payment already Completed is returned as-is (a duplicate
+    /// return/IPN call is a no-op, so our records never double-count), and a missing payment returns
+    /// null instead of throwing.
+    /// </summary>
+    public async Task<Payment?> CompleteByOrderAsync(Guid theOrderId, CancellationToken theCancellationToken = default)
+    {
+        var aPayments = await myPaymentRepository.GetByOrderAsync(theOrderId, theCancellationToken);
+
+        // Already completed → duplicate callback; return it unchanged (idempotent).
+        var aCompleted = aPayments.FirstOrDefault(p => p.PaymentStatus == PaymentStatus.Completed);
+        if (aCompleted is not null)
+        {
+            return aCompleted;
+        }
+
+        // Otherwise complete the pending one. No pending payment recorded → nothing to do (null).
+        var aPending = aPayments.FirstOrDefault(p => p.PaymentStatus == PaymentStatus.Pending);
+        if (aPending is null)
+        {
+            return null;
+        }
+
+        aPending.MarkCompleted();
+        await myPaymentRepository.UpdateAsync(aPending, theCancellationToken);
+        return aPending;
+    }
 }

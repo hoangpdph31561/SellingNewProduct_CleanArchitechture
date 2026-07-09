@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.Saga.Core.Persistence;
 using SellingNewProduct.Infrastructure.Saga.Core.Recovery;
+using SellingNewProduct.Infrastructure.Saga.Core.Resilience;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 
 namespace SellingNewProduct.Infrastructure.Saga.Core;
@@ -27,6 +28,10 @@ public static class DependencyInjection
         // MongoDB outbox writers use it, so both databases route facts→Kafka / commands→RabbitMQ the
         // same way. Depends only on the messaging registries (singletons).
         theServices.AddSingleton<Outbox.OutboxRouter>();
+
+        // Circuit breaker + retry + timeout for the cross-store read hops (decorators applied where the
+        // ICrossDbDirectory / ICrossDbOrderStats implementations are registered, in the two DB projects).
+        theServices.AddCrossStoreResilience();
 
         // Undo machinery: registry of compensation handlers + the shared retrying compensator.
         theServices.AddScoped<ISagaCompensationRegistry, SagaCompensationRegistry>();

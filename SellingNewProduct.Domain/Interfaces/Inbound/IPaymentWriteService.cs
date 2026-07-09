@@ -18,4 +18,12 @@ public interface IPaymentWriteService : IWriteService<Payment>
 
     /// <summary>Marks an existing payment as completed.</summary>
     Task<Payment> CompleteAsync(Guid thePaymentId, CancellationToken theCancellationToken = default);
+
+    /// <summary>
+    /// Completes the pending payment of an order — the entry point a payment-gateway callback (e.g. VNPay
+    /// return/IPN) uses, since it only knows the order id. Idempotent: a duplicate callback finds the
+    /// payment already completed and returns it unchanged. Returns null when the order has no payment to
+    /// complete (none was recorded), so the caller can react without treating it as an error.
+    /// </summary>
+    Task<Payment?> CompleteByOrderAsync(Guid theOrderId, CancellationToken theCancellationToken = default);
 }

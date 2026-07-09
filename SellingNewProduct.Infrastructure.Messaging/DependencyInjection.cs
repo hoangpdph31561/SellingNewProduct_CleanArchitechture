@@ -6,6 +6,7 @@ using SellingNewProduct.Infrastructure.Messaging.Contracts;
 using SellingNewProduct.Infrastructure.Messaging.Kafka;
 using SellingNewProduct.Infrastructure.Messaging.Outbox;
 using SellingNewProduct.Infrastructure.Messaging.RabbitMq;
+using SellingNewProduct.Infrastructure.Messaging.Resilience;
 using SellingNewProduct.Infrastructure.Messaging.Routing;
 using SellingNewProduct.Infrastructure.Messaging.Services;
 using SellingNewProduct.Infrastructure.Messaging.Workers;
@@ -42,9 +43,12 @@ public static class DependencyInjection
         // The relay that drains every outbox and routes each row to Kafka or RabbitMQ by destination.
         theServices.AddHostedService<OutboxDispatcher>();
 
+        // Polly resilience shared by the command workers that call downstream gateways.
+        theServices.AddDownstreamResilience();
+
         RegisterEventHandlers(theServices);
         RegisterCommandWorkers(theServices);
-        RegisterSideEffects(theServices);
+        RegisterSideEffects(theServices, theConfiguration);
 
         return theServices;
     }
@@ -93,11 +97,31 @@ public static class DependencyInjection
         theServices.AddScoped<ICommandHandler<RestockAlertCommand>, RestockAlertCommandWorker>();
     }
 
-    /// <summary>The faked downstream gateways — swap for real adapters without touching consumers.</summary>
-    private static void RegisterSideEffects(IServiceCollection theServices)
+    /// <summary>
+    /// The downstream gateways. When <c>Gateways:UseReal</c> is true the email/invoice ports bind to the
+    /// real SMTP + PDF adapters (needing <c>Gateways:Smtp</c>/<c>Gateways:Invoice</c> config); otherwise
+    /// they fall back to the logging stand-ins so the app still runs locally without credentials. Either
+    /// way the command worker calls them through the Polly circuit breaker — the consumer never changes.
+    /// </summary>
+    private static void RegisterSideEffects(IServiceCollection theServices, IConfiguration theConfiguration)
     {
-        theServices.AddScoped<IEmailSender, LoggingEmailSender>();
-        theServices.AddScoped<IInvoiceIssuer, LoggingInvoiceIssuer>();
+        var aUseReal = theConfiguration.GetValue<bool>("Gateways:UseReal");
+
+        if (aUseReal)
+        {
+            theServices.Configure<SmtpOptions>(theConfiguration.GetSection(SmtpOptions.SectionName));
+            theServices.Configure<InvoiceOptions>(theConfiguration.GetSection(InvoiceOptions.SectionName));
+
+            theServices.AddScoped<IEmailSender, SmtpEmailSender>();
+            theServices.AddScoped<IInvoiceIssuer, PdfInvoiceIssuer>();
+        }
+        else
+        {
+            theServices.AddScoped<IEmailSender, LoggingEmailSender>();
+            theServices.AddScoped<IInvoiceIssuer, LoggingInvoiceIssuer>();
+        }
+
+        // Notification/restock stay logging stand-ins for now (no real provider chosen).
         theServices.AddScoped<INotificationSender, LoggingNotificationSender>();
         theServices.AddScoped<IRestockAlerter, LoggingRestockAlerter>();
         theServices.AddSingleton<IAnalyticsStore, InMemoryAnalyticsStore>();

@@ -7,6 +7,7 @@ using SellingNewProduct.Infrastructure.Saga.Core;
 using SellingNewProduct.Infrastructure.SqlServer.Saga;
 using SellingNewProduct.Infrastructure.MongoDB.Saga;
 using SellingNewProduct.Infrastructure.Messaging;
+using SellingNewProduct.Infrastructure.Payments;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,32 +18,22 @@ builder.Services.AddApplicationServices();  // CQRS handlers + MediatR + validat
 // Composition root: pick ONE database implementation. This is the only place
 // in the whole solution that knows which database is in use. The domain and
 // the controllers are identical regardless of the choice below.
-var aProvider = builder.Configuration["DatabaseProvider"] ?? "SqlServer";
+//var aProvider = builder.Configuration["DatabaseProvider"] ?? "SqlServer";
+// Polyglot persistence: Order/Payment in SQL Server, the rest in MongoDB, tied together by a
+// saga (cross-database transaction via local commits + compensations). Needs BOTH the SqlServer
+// and MongoDB connection strings. See docs/saga-hybrid.md.
+builder.Services.AddSagaCore();
+builder.Services.AddSqlServerSagaInfrastructure(builder.Configuration);
+builder.Services.AddMongoSagaInfrastructure(builder.Configuration);
 
-if (string.Equals(aProvider, "MongoDB", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddMongoInfrastructure(builder.Configuration);
-}
-else if (string.Equals(aProvider, "Hybrid", StringComparison.OrdinalIgnoreCase)
-         || string.Equals(aProvider, "Saga", StringComparison.OrdinalIgnoreCase))
-{
-    // Polyglot persistence: Order/Payment in SQL Server, the rest in MongoDB, tied together by a
-    // saga (cross-database transaction via local commits + compensations). Needs BOTH the SqlServer
-    // and MongoDB connection strings. See docs/saga-hybrid.md.
-    builder.Services.AddSagaCore();
-    builder.Services.AddSqlServerSagaInfrastructure(builder.Configuration);
-    builder.Services.AddMongoSagaInfrastructure(builder.Configuration);
+// Event-driven side effects: the SQL side writes domain events to a transactional outbox; this
+// relays them onto Kafka (the event backbone), where process managers turn facts into RabbitMQ
+// work commands (send email, issue invoice, notify) and an analytics projection reads the same
+// log independently. See docs/outbox-kafka-rabbitmq.md.
+builder.Services.AddMessaging(builder.Configuration);
 
-    // Event-driven side effects: the SQL side writes domain events to a transactional outbox; this
-    // relays them onto Kafka (the event backbone), where process managers turn facts into RabbitMQ
-    // work commands (send email, issue invoice, notify) and an analytics projection reads the same
-    // log independently. See docs/outbox-kafka-rabbitmq.md.
-    builder.Services.AddMessaging(builder.Configuration);
-}
-else
-{
-    builder.Services.AddSqlServerInfrastructure(builder.Configuration);
-}
+// Online payments: the VNPay gateway (build signed pay URL + verify the return/IPN signature).
+builder.Services.AddVnPayPayments(builder.Configuration);
 
 var app = builder.Build();
 
