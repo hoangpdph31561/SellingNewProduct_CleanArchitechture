@@ -72,6 +72,9 @@ internal static class ApiMappings
     public static CreateUserCommand ToCommand(this CreateUserRequest theRequest) =>
         new(theRequest.Username, theRequest.Password, theRequest.Email, theRequest.Role);
 
+    public static LoginCommand ToCommand(this LoginRequest theRequest) =>
+        new(theRequest.Username, theRequest.Password);
+
     // ----- Domain entity -> response DTO -----
 
     public static CategoryResponse ToResponse(this Category theCategory) =>
@@ -100,6 +103,13 @@ internal static class ApiMappings
 
     public static UserResponse ToResponse(this User theUser) =>
         new(theUser.Id, theUser.Username, theUser.Email.Value, (int)theUser.Role, theUser.Status.ToString());
+
+    public static LoginResponse ToResponse(this LoginResult theResult) =>
+        new(theResult.AccessToken,
+            theResult.ExpiresAtUtc,
+            theResult.UserId,
+            theResult.Username,
+            theResult.Role.ToString());
 
     public static EmployeeResponse ToResponse(this Employee theEmployee) =>
         new(theEmployee.Id,

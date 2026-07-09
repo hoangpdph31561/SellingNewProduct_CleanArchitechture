@@ -85,6 +85,10 @@ Retry  (ngoài cùng)
   breaker nhảy, (b) khi breaker đã OPEN thì `BrokenCircuitException` khiến retry **dừng ngay**, không
   thử lại vô ích.
 
+> **Cập nhật:** pipeline gateway hạ nguồn nay có thêm một lớp **bulkhead** bọc **ngoài cả retry**
+> (`bulkhead → retry → breaker → timeout`) để cô lập theo **số call đồng thời** — thứ breaker (đo *tỉ
+> lệ lỗi*) không chặn được khi gateway *sống nhưng chậm*. Xem chi tiết: [polly-bulkhead.md](polly-bulkhead.md).
+
 ---
 
 ## 5. Dự án dùng circuit breaker ở ĐÂU
@@ -352,5 +356,6 @@ var result = await pipeline.ExecuteAsync(
 - Dự án đặt breaker ở: **gateway hạ nguồn** và **đọc chéo store** (có fallback).
 - **Chỉ bọc read idempotent**; write của saga để saga tự lo.
 
-Liên quan: [saga-hybrid.md](saga-hybrid.md), [outbox-kafka-rabbitmq.md](outbox-kafka-rabbitmq.md),
-[gateway-email-smtp.md](gateway-email-smtp.md), [gateway-vnpay.md](gateway-vnpay.md).
+Liên quan: [polly-bulkhead.md](polly-bulkhead.md), [saga-hybrid.md](saga-hybrid.md),
+[outbox-kafka-rabbitmq.md](outbox-kafka-rabbitmq.md), [gateway-email-smtp.md](gateway-email-smtp.md),
+[gateway-vnpay.md](gateway-vnpay.md).

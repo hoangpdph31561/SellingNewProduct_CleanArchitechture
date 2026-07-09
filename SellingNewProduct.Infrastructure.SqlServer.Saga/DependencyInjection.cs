@@ -49,7 +49,7 @@ public static class DependencyInjection
         theServices.AddScoped<SqlCrossDbOrderStats>();
         theServices.AddScoped<ICrossDbOrderStats>(sp => new ResilientCrossDbOrderStats(
             sp.GetRequiredService<SqlCrossDbOrderStats>(),
-            sp.GetRequiredService<CrossStorePipeline>(),
+            sp.GetRequiredService<CrossStoreToSqlPipeline>(),
             sp.GetRequiredService<ILogger<ResilientCrossDbOrderStats>>()));
 
         // Transactional outbox: the writer stages event rows into the pivot's own transaction, and the

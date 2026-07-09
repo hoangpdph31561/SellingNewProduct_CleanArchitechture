@@ -11,6 +11,9 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <!-- Polly = circuit breaker + retry + timeout around the cross-store read hops. -->
     <PackageReference Include="Polly.Extensions" Version="8.5.0" />
+    <!-- Polly.RateLimiting = the per-store bulkhead (concurrency limiter) that isolates each
+         cross-store read hop so a slow "other store" cannot drain the shared request/connection pool. -->
+    <PackageReference Include="Polly.RateLimiting" Version="8.5.0" />
   </ItemGroup>
 
   <PropertyGroup>

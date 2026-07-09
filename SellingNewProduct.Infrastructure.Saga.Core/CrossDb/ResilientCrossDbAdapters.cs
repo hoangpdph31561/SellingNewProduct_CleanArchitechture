@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.RateLimiting;
 using Polly.Timeout;
 using SellingNewProduct.Infrastructure.Saga.Core.Resilience;
 
@@ -22,7 +23,7 @@ public sealed class ResilientCrossDbDirectory : ICrossDbDirectory
     private readonly ILogger<ResilientCrossDbDirectory> myLogger;
 
     public ResilientCrossDbDirectory(
-        ICrossDbDirectory theInner, CrossStorePipeline thePipeline, ILogger<ResilientCrossDbDirectory> theLogger)
+        ICrossDbDirectory theInner, CrossStoreToMongoPipeline thePipeline, ILogger<ResilientCrossDbDirectory> theLogger)
     {
         myInner = theInner;
         myPipeline = thePipeline.Pipeline;
@@ -57,7 +58,10 @@ public sealed class ResilientCrossDbDirectory : ICrossDbDirectory
         {
             return await myPipeline.ExecuteAsync(async theCt => await theOperation(theCt), theCancellationToken);
         }
-        catch (Exception aEx) when (aEx is BrokenCircuitException or TimeoutRejectedException)
+        // Degrade gracefully when the breaker is OPEN, a call timed out, OR the bulkhead is full: return
+        // partial data instead of failing the whole request. Any OTHER exception still propagates so a
+        // real bug is never silently swallowed.
+        catch (Exception aEx) when (aEx is BrokenCircuitException or TimeoutRejectedException or RateLimiterRejectedException)
         {
             myLogger.LogWarning("Cross-store '{Op}' short-circuited ({Reason}); returning fallback.", theName, aEx.GetType().Name);
             return theFallback;
@@ -77,7 +81,7 @@ public sealed class ResilientCrossDbOrderStats : ICrossDbOrderStats
     private readonly ILogger<ResilientCrossDbOrderStats> myLogger;
 
     public ResilientCrossDbOrderStats(
-        ICrossDbOrderStats theInner, CrossStorePipeline thePipeline, ILogger<ResilientCrossDbOrderStats> theLogger)
+        ICrossDbOrderStats theInner, CrossStoreToSqlPipeline thePipeline, ILogger<ResilientCrossDbOrderStats> theLogger)
     {
         myInner = theInner;
         myPipeline = thePipeline.Pipeline;
@@ -102,7 +106,10 @@ public sealed class ResilientCrossDbOrderStats : ICrossDbOrderStats
         {
             return await myPipeline.ExecuteAsync(async theCt => await theOperation(theCt), theCancellationToken);
         }
-        catch (Exception aEx) when (aEx is BrokenCircuitException or TimeoutRejectedException)
+        // Degrade gracefully when the breaker is OPEN, a call timed out, OR the bulkhead is full: return
+        // partial data instead of failing the whole request. Any OTHER exception still propagates so a
+        // real bug is never silently swallowed.
+        catch (Exception aEx) when (aEx is BrokenCircuitException or TimeoutRejectedException or RateLimiterRejectedException)
         {
             myLogger.LogWarning("Cross-store '{Op}' short-circuited ({Reason}); returning fallback.", theName, aEx.GetType().Name);
             return theFallback;

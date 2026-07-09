@@ -16,4 +16,13 @@ internal sealed class PasswordHasher : IPasswordHasher
         var aBytes = SHA256.HashData(Encoding.UTF8.GetBytes(thePassword));
         return Convert.ToBase64String(aBytes);
     }
+
+    public bool Verify(string thePassword, string thePasswordHash)
+    {
+        // This scheme is deterministic, so re-hash and compare. Use a fixed-time comparison so the
+        // check does not leak how many leading characters matched via its timing.
+        var aExpected = Encoding.UTF8.GetBytes(Hash(thePassword));
+        var aActual = Encoding.UTF8.GetBytes(thePasswordHash);
+        return CryptographicOperations.FixedTimeEquals(aExpected, aActual);
+    }
 }

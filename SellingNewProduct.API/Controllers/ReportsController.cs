@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SellingNewProduct.Application.Reports;
 using SellingNewProduct.Domain.Common;
@@ -12,6 +13,7 @@ namespace SellingNewProduct.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Admin,Manager")]
 public sealed class ReportsController : ControllerBase
 {
     private readonly ISender mySender;

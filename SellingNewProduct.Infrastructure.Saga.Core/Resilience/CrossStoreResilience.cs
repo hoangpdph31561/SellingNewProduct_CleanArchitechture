@@ -1,30 +1,38 @@
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.RateLimiting;
 using Polly.Registry;
 
 namespace SellingNewProduct.Infrastructure.Saga.Core.Resilience;
 
 /// <summary>
-/// One <see cref="ResiliencePipeline"/> shared by the cross-store read hops — the calls where a read
-/// model in one database reaches into the OTHER database (SQL order reads fetching customer/employee
-/// names from MongoDB, Mongo people reads fetching order stats from SQL). Those are the closest thing
-/// to a remote-service call in this app, so they are where a circuit breaker earns its keep: if the
-/// other store is struggling, the breaker OPENS and the caller fails fast (and falls back to partial
-/// data) instead of piling threads onto a sick dependency.
-///
-/// Applied ONLY to idempotent reads. Writes are deliberately left alone: they run inside saga
-/// transactions with compensation, so an outer retry could double-apply — the saga owns their retries.
+/// Base wrapper around a built cross-store <see cref="ResiliencePipeline"/>. It exists so the two
+/// read directions get DISTINCT injectable types (below) instead of sharing one — that is what keeps
+/// their resilience isolated. See <see cref="CrossStoreResilience"/> for why the split matters.
 /// </summary>
-public sealed class CrossStorePipeline
+public abstract class CrossStorePipeline
 {
-    public CrossStorePipeline(ResiliencePipeline thePipeline) => Pipeline = thePipeline;
+    protected CrossStorePipeline(ResiliencePipeline thePipeline) => Pipeline = thePipeline;
 
     public ResiliencePipeline Pipeline { get; }
 }
 
-/// <summary>Tunables for the cross-store pipeline. Defaults are production-sane; override at registration.</summary>
+/// <summary>Pipeline for the SQL-side read models reaching INTO MongoDB (customer/employee/category names).</summary>
+public sealed class CrossStoreToMongoPipeline : CrossStorePipeline
+{
+    public CrossStoreToMongoPipeline(ResiliencePipeline thePipeline) : base(thePipeline) { }
+}
+
+/// <summary>Pipeline for the Mongo-side read models reaching INTO SQL (order stats/totals).</summary>
+public sealed class CrossStoreToSqlPipeline : CrossStorePipeline
+{
+    public CrossStoreToSqlPipeline(ResiliencePipeline thePipeline) : base(thePipeline) { }
+}
+
+/// <summary>Tunables for the cross-store pipelines. Defaults are production-sane; override at registration.</summary>
 public sealed class CrossStoreResilienceOptions
 {
     /// <summary>Per-attempt timeout: abort a single hung cross-store query.</summary>
@@ -47,11 +55,36 @@ public sealed class CrossStoreResilienceOptions
 
     /// <summary>How long the breaker stays OPEN (fails fast) before probing with a trial call.</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Bulkhead: max cross-store reads (to a given store) running CONCURRENTLY. Kept well below the
+    /// database driver's connection-pool size so these secondary enrichment reads can never starve the
+    /// store's PRIMARY reads/writes of connections. Applied PER STORE (Mongo and SQL each get their own).
+    /// </summary>
+    public int MaxConcurrency { get; set; } = 10;
+
+    /// <summary>Bulkhead queue: extra reads allowed to WAIT for a permit before excess is rejected fast.</summary>
+    public int QueueLimit { get; set; } = 5;
 }
 
+/// <summary>
+/// Builds the resilience for the cross-store read hops — the calls where a read model in one database
+/// reaches into the OTHER database (SQL order reads fetching names from MongoDB; Mongo people reads
+/// fetching order stats from SQL). Those are the closest thing to a remote-service call in this app,
+/// so they are where these strategies earn their keep.
+///
+/// Two SEPARATE pipelines are registered, one per target store (<c>cross-store-to-mongo</c> and
+/// <c>cross-store-to-sql</c>). Splitting by store is the whole point: a slow/failing Mongo must NOT
+/// trip the breaker or exhaust the bulkhead of the perfectly healthy SQL-bound reads (and vice versa).
+/// A single shared pipeline would put both "ship compartments" behind one wall.
+///
+/// Each pipeline layers (outermost first): bulkhead → retry → circuit breaker → timeout. Applied ONLY
+/// to idempotent reads — writes run inside saga transactions with compensation and own their retries.
+/// </summary>
 public static class CrossStoreResilience
 {
-    public const string PipelineKey = "cross-store-reads";
+    public const string ToMongoPipelineKey = "cross-store-to-mongo";
+    public const string ToSqlPipelineKey = "cross-store-to-sql";
 
     public static IServiceCollection AddCrossStoreResilience(
         this IServiceCollection theServices, Action<CrossStoreResilienceOptions>? theConfigure = null)
@@ -59,65 +92,99 @@ public static class CrossStoreResilience
         var aOptions = new CrossStoreResilienceOptions();
         theConfigure?.Invoke(aOptions);
 
-        theServices.AddResiliencePipeline(PipelineKey, (theBuilder, theContext) =>
-        {
-            var aLogger = theContext.ServiceProvider
-                .GetRequiredService<ILoggerFactory>()
-                .CreateLogger("CrossStoreResilience");
+        // One pipeline per target store — isolated failure counting AND isolated concurrency.
+        theServices.AddResiliencePipeline(ToMongoPipelineKey, (theBuilder, theContext) =>
+            ConfigurePipeline(theBuilder, theContext, aOptions, "to-Mongo"));
+        theServices.AddResiliencePipeline(ToSqlPipelineKey, (theBuilder, theContext) =>
+            ConfigurePipeline(theBuilder, theContext, aOptions, "to-SQL"));
 
-            // Retry (outermost): absorb brief blips. Sits outside the breaker so retries also count
-            // toward tripping it; never retry once the breaker is already OPEN or on cancellation.
-            theBuilder.AddRetry(new Polly.Retry.RetryStrategyOptions
-            {
-                MaxRetryAttempts = aOptions.MaxRetryAttempts,
-                BackoffType = DelayBackoffType.Exponential,
-                UseJitter = true,
-                Delay = aOptions.RetryDelay,
-                ShouldHandle = new PredicateBuilder().Handle<Exception>(
-                    theEx => theEx is not (BrokenCircuitException or OperationCanceledException)),
-                OnRetry = theArgs =>
-                {
-                    aLogger.LogWarning("Cross-store ↻ retry {Attempt} after {Delay}ms ({Error}).",
-                        theArgs.AttemptNumber + 1, theArgs.RetryDelay.TotalMilliseconds, theArgs.Outcome.Exception?.Message);
-                    return ValueTask.CompletedTask;
-                }
-            });
-
-            // Circuit breaker (middle): OPEN when too many cross-store calls fail, then short-circuit.
-            theBuilder.AddCircuitBreaker(new CircuitBreakerStrategyOptions
-            {
-                FailureRatio = aOptions.FailureRatio,
-                SamplingDuration = aOptions.SamplingDuration,
-                MinimumThroughput = aOptions.MinimumThroughput,
-                BreakDuration = aOptions.BreakDuration,
-                ShouldHandle = new PredicateBuilder().Handle<Exception>(
-                    theEx => theEx is not OperationCanceledException),
-                OnOpened = theArgs =>
-                {
-                    aLogger.LogError("Cross-store ⛔ circuit OPEN for {Break}s — the other store is failing; reads fail fast.",
-                        theArgs.BreakDuration.TotalSeconds);
-                    return ValueTask.CompletedTask;
-                },
-                OnClosed = _ =>
-                {
-                    aLogger.LogInformation("Cross-store ✅ circuit CLOSED — the other store recovered.");
-                    return ValueTask.CompletedTask;
-                },
-                OnHalfOpened = _ =>
-                {
-                    aLogger.LogInformation("Cross-store 🔎 circuit HALF-OPEN — probing the other store.");
-                    return ValueTask.CompletedTask;
-                }
-            });
-
-            // Timeout (innermost): a single hung query cannot wedge the request thread.
-            theBuilder.AddTimeout(aOptions.Timeout);
-        });
-
-        // Expose the built pipeline as a plain singleton so the decorators inject it directly.
-        theServices.AddSingleton(theProvider => new CrossStorePipeline(
-            theProvider.GetRequiredService<ResiliencePipelineProvider<string>>().GetPipeline(PipelineKey)));
+        // Expose each built pipeline as its own typed wrapper so the decorators inject the right one.
+        theServices.AddSingleton(theProvider => new CrossStoreToMongoPipeline(
+            theProvider.GetRequiredService<ResiliencePipelineProvider<string>>().GetPipeline(ToMongoPipelineKey)));
+        theServices.AddSingleton(theProvider => new CrossStoreToSqlPipeline(
+            theProvider.GetRequiredService<ResiliencePipelineProvider<string>>().GetPipeline(ToSqlPipelineKey)));
 
         return theServices;
+    }
+
+    /// <summary>Shared layout for both per-store pipelines; <paramref name="theLabel"/> only tags the logs.</summary>
+    private static void ConfigurePipeline(
+        ResiliencePipelineBuilder theBuilder,
+        Polly.DependencyInjection.AddResiliencePipelineContext<string> theContext,
+        CrossStoreResilienceOptions theOptions,
+        string theLabel)
+    {
+        var aLogger = theContext.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("CrossStoreResilience");
+
+        // Bulkhead (outermost): a single shared ConcurrencyLimiter caps how many cross-store reads to
+        // THIS store run at once, so a slow store cannot pile request threads onto the shared pool.
+        // Built once here (the pipeline is a singleton) — do NOT new it inside the RateLimiter lambda.
+        var aBulkhead = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+        {
+            PermitLimit = theOptions.MaxConcurrency,
+            QueueLimit = theOptions.QueueLimit
+        });
+
+        theBuilder.AddRateLimiter(new RateLimiterStrategyOptions
+        {
+            RateLimiter = theArgs => aBulkhead.AcquireAsync(1, theArgs.Context.CancellationToken),
+            OnRejected = theArgs =>
+            {
+                aLogger.LogWarning(
+                    "Cross-store 🚧 bulkhead FULL ({Label}) — read rejected; {Permits} permits + {Queue} queue slots all in use.",
+                    theLabel, theOptions.MaxConcurrency, theOptions.QueueLimit);
+                return ValueTask.CompletedTask;
+            }
+        });
+
+        // Retry: absorb brief blips. Sits outside the breaker so retries also count toward tripping it;
+        // never retry once the breaker is already OPEN or on cancellation.
+        theBuilder.AddRetry(new Polly.Retry.RetryStrategyOptions
+        {
+            MaxRetryAttempts = theOptions.MaxRetryAttempts,
+            BackoffType = DelayBackoffType.Exponential,
+            UseJitter = true,
+            Delay = theOptions.RetryDelay,
+            ShouldHandle = new PredicateBuilder().Handle<Exception>(
+                theEx => theEx is not (BrokenCircuitException or OperationCanceledException)),
+            OnRetry = theArgs =>
+            {
+                aLogger.LogWarning("Cross-store ↻ retry {Attempt} ({Label}) after {Delay}ms ({Error}).",
+                    theArgs.AttemptNumber + 1, theLabel, theArgs.RetryDelay.TotalMilliseconds, theArgs.Outcome.Exception?.Message);
+                return ValueTask.CompletedTask;
+            }
+        });
+
+        // Circuit breaker (middle): OPEN when too many cross-store calls to this store fail.
+        theBuilder.AddCircuitBreaker(new CircuitBreakerStrategyOptions
+        {
+            FailureRatio = theOptions.FailureRatio,
+            SamplingDuration = theOptions.SamplingDuration,
+            MinimumThroughput = theOptions.MinimumThroughput,
+            BreakDuration = theOptions.BreakDuration,
+            ShouldHandle = new PredicateBuilder().Handle<Exception>(
+                theEx => theEx is not OperationCanceledException),
+            OnOpened = theArgs =>
+            {
+                aLogger.LogError("Cross-store ⛔ circuit OPEN ({Label}) for {Break}s — the other store is failing; reads fail fast.",
+                    theLabel, theArgs.BreakDuration.TotalSeconds);
+                return ValueTask.CompletedTask;
+            },
+            OnClosed = _ =>
+            {
+                aLogger.LogInformation("Cross-store ✅ circuit CLOSED ({Label}) — the other store recovered.", theLabel);
+                return ValueTask.CompletedTask;
+            },
+            OnHalfOpened = _ =>
+            {
+                aLogger.LogInformation("Cross-store 🔎 circuit HALF-OPEN ({Label}) — probing the other store.", theLabel);
+                return ValueTask.CompletedTask;
+            }
+        });
+
+        // Timeout (innermost): a single hung query cannot wedge the request thread.
+        theBuilder.AddTimeout(theOptions.Timeout);
     }
 }

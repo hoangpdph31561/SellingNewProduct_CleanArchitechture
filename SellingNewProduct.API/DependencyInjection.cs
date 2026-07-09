@@ -1,4 +1,8 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using SellingNewProduct.API.Filters;
 using SellingNewProduct.API.OpenApi;
 using SellingNewProduct.API.Security;
@@ -28,6 +32,43 @@ public static class DependencyInjection
 
         // Password hashing: API provides the implementation of the Domain contract.
         theServices.AddSingleton<IPasswordHasher, PasswordHasher>();
+
+        return theServices;
+    }
+
+    /// <summary>
+    /// Wires up JWT bearer authentication + role-based authorization. The API owns the token format,
+    /// so it supplies the Domain <see cref="IAccessTokenGenerator"/> implementation here too. The
+    /// signing key, issuer and audience come from the "Jwt" configuration section.
+    /// </summary>
+    public static IServiceCollection AddApiAuthentication(this IServiceCollection theServices, IConfiguration theConfiguration)
+    {
+        theServices.Configure<JwtOptions>(theConfiguration.GetSection(JwtOptions.SectionName));
+        var aJwt = theConfiguration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
+            ?? throw new InvalidOperationException("Missing 'Jwt' configuration section.");
+
+        // Token minting (Domain outbound port) — implemented in the API with the same key.
+        theServices.AddSingleton<IAccessTokenGenerator, JwtAccessTokenGenerator>();
+
+        theServices
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(theOptions =>
+            {
+                theOptions.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = aJwt.Issuer,
+                    ValidAudience = aJwt.Audience,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(aJwt.SigningKey)),
+                    // No grace window — an expired token is rejected the instant it expires.
+                    ClockSkew = TimeSpan.Zero
+                };
+            });
+
+        theServices.AddAuthorization();
 
         return theServices;
     }

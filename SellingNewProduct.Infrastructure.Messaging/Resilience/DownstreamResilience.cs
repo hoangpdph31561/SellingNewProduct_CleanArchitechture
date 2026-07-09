@@ -1,7 +1,9 @@
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.RateLimiting;
 using Polly.Registry;
 using Polly.Retry;
 using Polly.Timeout;
@@ -15,11 +17,17 @@ namespace SellingNewProduct.Infrastructure.Messaging.Resilience;
 /// to protect. When a gateway starts failing, the breaker OPENS and fails fast for a cool-down
 /// window instead of letting a command worker hammer a dead dependency and pile up work.
 ///
-/// Strategy order (outermost first — the "onion"): retry → circuit breaker → timeout.
+/// Strategy order (outermost first — the "onion"): bulkhead → retry → circuit breaker → timeout.
 ///   • Timeout  (innermost): abort a single attempt that hangs, so one stuck call cannot block a worker.
 ///   • Breaker  (middle):    trip after too many failures in the sampling window; short-circuit while OPEN.
-///   • Retry    (outermost): absorb brief blips. It sits OUTSIDE the breaker so retries also count
+///   • Retry    (middle):    absorb brief blips. It sits OUTSIDE the breaker so retries also count
 ///                            toward tripping it, and a BrokenCircuitException stops retrying instantly.
+///   • Bulkhead (outermost): the concurrency limiter — cap how many calls may be IN FLIGHT at once
+///                            (plus a small waiting queue). This is resource ISOLATION: a gateway that
+///                            slows down can only ever tie up N permits, so it cannot drain the entire
+///                            thread/connection pool and starve the other, healthy workers. Excess work
+///                            is rejected fast with a RateLimiterRejectedException. It is the outermost
+///                            layer so a permit is held for the WHOLE retry sequence, not per attempt.
 /// </summary>
 public static class DownstreamResilience
 {
@@ -34,7 +42,29 @@ public static class DownstreamResilience
                 .GetRequiredService<ILoggerFactory>()
                 .CreateLogger("DownstreamResilience");
 
-            // 3) Retry brief, transient failures with exponential backoff + jitter (outermost).
+            // 4) Bulkhead (outermost): a single shared concurrency limiter isolates in-flight calls.
+            //    Only PermitLimit calls run at once; up to QueueLimit more wait for a permit; anything
+            //    beyond that is rejected immediately (RateLimiterRejectedException) rather than piling
+            //    up. Built ONCE here (the pipeline is a singleton) so every worker shares the same pool.
+            var aBulkhead = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+            {
+                PermitLimit = 8,
+                QueueLimit = 4
+            });
+
+            theBuilder.AddRateLimiter(new RateLimiterStrategyOptions
+            {
+                RateLimiter = theArgs => aBulkhead.AcquireAsync(1, theArgs.Context.CancellationToken),
+                OnRejected = theArgs =>
+                {
+                    aLogger.LogWarning(
+                        "Polly 🚧 bulkhead FULL — call rejected; {Permits} permits + {Queue} queue slots all in use.",
+                        8, 4);
+                    return ValueTask.CompletedTask;
+                }
+            });
+
+            // 3) Retry brief, transient failures with exponential backoff + jitter.
             theBuilder.AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = 3,

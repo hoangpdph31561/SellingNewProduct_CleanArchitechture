@@ -57,7 +57,7 @@ public static class DependencyInjection
         theServices.AddScoped<MongoCrossDbDirectory>();
         theServices.AddScoped<ICrossDbDirectory>(sp => new ResilientCrossDbDirectory(
             sp.GetRequiredService<MongoCrossDbDirectory>(),
-            sp.GetRequiredService<CrossStorePipeline>(),
+            sp.GetRequiredService<CrossStoreToMongoPipeline>(),
             sp.GetRequiredService<ILogger<ResilientCrossDbDirectory>>()));
 
         // MongoDB owns the single saga ledger. The store is shared by the saga-aware repositories

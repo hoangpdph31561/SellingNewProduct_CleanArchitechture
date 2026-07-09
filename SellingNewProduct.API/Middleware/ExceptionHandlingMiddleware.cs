@@ -13,6 +13,7 @@ namespace SellingNewProduct.API.Middleware;
 ///   rule violations) → 400.
 /// - <see cref="ConflictException"/> (uniqueness / state conflict) → 409.
 /// - <see cref="NotFoundException"/> (referenced entity missing) → 404.
+/// - <see cref="UnauthorizedException"/> (bad / missing credentials) → 401.
 /// - anything else → 500.
 /// </summary>
 internal sealed class ExceptionHandlingMiddleware
@@ -45,6 +46,10 @@ internal sealed class ExceptionHandlingMiddleware
         catch (ConflictException aConflictException)
         {
             await WriteAsync(theContext, HttpStatusCode.Conflict, new[] { aConflictException.Message });
+        }
+        catch (UnauthorizedException aUnauthorizedException)
+        {
+            await WriteAsync(theContext, HttpStatusCode.Unauthorized, new[] { aUnauthorizedException.Message });
         }
         catch (DomainException aDomainException)
         {

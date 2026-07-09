@@ -21,6 +21,7 @@ public static class DependencyInjection
         theServices.AddScoped<IProductWriteService, ProductWriteService>();
         theServices.AddScoped<ICategoryWriteService, CategoryWriteService>();
         theServices.AddScoped<IUserWriteService, UserWriteService>();
+        theServices.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
         theServices.AddScoped<ICustomerWriteService, CustomerWriteService>();
         theServices.AddScoped<IEmployeeWriteService, EmployeeWriteService>();
 

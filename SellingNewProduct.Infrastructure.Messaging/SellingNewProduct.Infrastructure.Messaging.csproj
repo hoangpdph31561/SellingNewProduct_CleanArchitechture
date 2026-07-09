@@ -13,6 +13,9 @@
     <PackageReference Include="RabbitMQ.Client" Version="7.0.0" />
     <!-- Polly = resilience pipelines (timeout + retry + circuit breaker) around downstream gateways. -->
     <PackageReference Include="Polly.Extensions" Version="8.5.0" />
+    <!-- Polly.RateLimiting = the bulkhead (concurrency limiter) strategy that isolates each worker's
+         in-flight calls so one slow gateway cannot starve the whole thread/connection pool. -->
+    <PackageReference Include="Polly.RateLimiting" Version="8.5.0" />
     <!-- MailKit = real SMTP email delivery. QuestPDF = real PDF invoice rendering. -->
     <PackageReference Include="MailKit" Version="4.13.0" />
     <PackageReference Include="QuestPDF" Version="2024.12.0" />
