@@ -66,6 +66,21 @@ internal sealed class MongoProductWriteRepository : IProductWriteRepository
             .AnyAsync(r => r.Sku == theSku && r.Status != DeletedStatus, theCancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<string>> GetExistingSkusAsync(IReadOnlyCollection<string> theSkus, CancellationToken theCancellationToken = default)
+    {
+        if (theSkus.Count == 0)
+        {
+            return [];
+        }
+
+        // One round-trip: ask the store which of these SKUs are already taken, diff in memory.
+        return await myMongoAppDbContext.Products
+            .AsNoTracking()
+            .Where(r => theSkus.Contains(r.Sku) && r.Status != DeletedStatus)
+            .Select(r => r.Sku)
+            .ToListAsync(theCancellationToken);
+    }
+
     public async Task AddAsync(Product theProduct, CancellationToken theCancellationToken = default)
     {
         myMongoAppDbContext.Products.Add(ProductMapper.ToDocument(theProduct));

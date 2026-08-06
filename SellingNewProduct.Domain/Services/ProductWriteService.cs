@@ -13,6 +13,12 @@ namespace SellingNewProduct.Domain.Services;
 /// </summary>
 public sealed class ProductWriteService : IProductWriteService
 {
+    // Build the domain objects across cores once an import is large enough to be worth the overhead.
+    private const int ParallelBuildThreshold = 100;
+
+    // Insert in chunks so a huge import is not one giant command / transaction.
+    private const int BulkWriteBatchSize = 500;
+
     private readonly IProductWriteRepository myProductRepository;
     private readonly ICategoryWriteRepository myCategoryRepository;
 
@@ -59,27 +65,60 @@ public sealed class ProductWriteService : IProductWriteService
             throw new ConflictException($"SKU '{aDuplicateInBatch.Key}' is repeated in the request.");
         }
 
-        // Every referenced category must exist (check each distinct id once).
+        // Every referenced category must exist (check each distinct id once). These calls share one
+        // DbContext, which is NOT thread-safe, so they run sequentially — do NOT wrap them in
+        // Task.WhenAll.
         foreach (var aCategoryId in theRequests.Select(r => r.CategoryId).Distinct())
         {
             await EnsureCategoryExistsAsync(aCategoryId, theCancellationToken);
         }
 
-        // None of the SKUs may already exist in the store.
-        foreach (var aSku in aSkuByIndex)
+        // None of the SKUs may already exist. Instead of one query per SKU (an N+1 that also cannot
+        // be parallelized on a shared DbContext), ask the store for all taken SKUs in a SINGLE
+        // round-trip and diff in memory: batching beats fan-out here.
+        var aSkuValues = aSkuByIndex.Select(s => s.Value).ToList();
+        var aExistingSkus = await myProductRepository.GetExistingSkusAsync(aSkuValues, theCancellationToken);
+        if (aExistingSkus.Count > 0)
         {
-            if (await myProductRepository.ExistsBySkuAsync(aSku.Value, theCancellationToken))
-            {
-                throw new ConflictException($"A product with SKU '{aSku.Value}' already exists.");
-            }
+            throw new ConflictException($"A product with SKU '{aExistingSkus.First()}' already exists.");
         }
 
-        var aProducts = theRequests
-            .Select((aRequest, aIndex) => Build(aRequest, aSkuByIndex[aIndex]))
-            .ToList();
+        var aProducts = await BuildManyAsync(theRequests, aSkuByIndex, theCancellationToken);
 
-        await myProductRepository.AddRangeAsync(aProducts, theCancellationToken);
+        // Bulk write: insert in chunks. Each chunk is one AddRange + SaveChanges round-trip, so a
+        // very large import does not build a single oversized command / transaction.
+        foreach (var aChunk in aProducts.Chunk(BulkWriteBatchSize))
+        {
+            await myProductRepository.AddRangeAsync(aChunk, theCancellationToken);
+        }
+
         return aProducts;
+    }
+
+    /// <summary>
+    /// Maps every request to a domain <see cref="Product"/>. Mapping is pure CPU work that touches no
+    /// shared state, so a large batch is spread across cores with a bounded degree of parallelism
+    /// (Task.Run offloads to the thread pool; the SemaphoreSlim inside <see cref="AsyncParallel"/>
+    /// caps how many run at once). A small batch maps inline — the parallel overhead is not worth it.
+    /// Results keep the input order either way.
+    /// </summary>
+    private static async Task<List<Product>> BuildManyAsync(
+        IReadOnlyList<NewProduct> theRequests,
+        IReadOnlyList<Sku> theSkuByIndex,
+        CancellationToken theCancellationToken)
+    {
+        if (theRequests.Count < ParallelBuildThreshold)
+        {
+            return theRequests.Select((aRequest, aIndex) => Build(aRequest, theSkuByIndex[aIndex])).ToList();
+        }
+
+        var aBuilt = await AsyncParallel.ForEachAsync(
+            Enumerable.Range(0, theRequests.Count),
+            Environment.ProcessorCount,
+            (aIndex, aCancellationToken) => Task.Run(() => Build(theRequests[aIndex], theSkuByIndex[aIndex]), aCancellationToken),
+            theCancellationToken);
+
+        return aBuilt.ToList();
     }
 
     private async Task EnsureCategoryExistsAsync(Guid theCategoryId, CancellationToken theCancellationToken)

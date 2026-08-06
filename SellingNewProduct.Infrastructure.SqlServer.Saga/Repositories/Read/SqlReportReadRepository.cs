@@ -36,11 +36,20 @@ internal sealed class SqlReportReadRepository : IReportReadRepository
     {
         var aPage = new PageRequest(thePage, thePageSize);
 
-        var aLines = await SalesLinesQuery()
+        // The sales lines come from SQL (AppDbContext); the category names come from MongoDB
+        // (through the cross-store directory, a different DbContext). Two DIFFERENT contexts, so it
+        // is safe to fetch both at the same time — Task.WhenAll overlaps the SQL and Mongo latency.
+        // (This would be a bug if the two calls shared one context: a DbContext is not thread-safe.)
+        var aLinesTask = SalesLinesQuery()
             .Select(d => new { d.ProductId, d.ProductName, d.Quantity, Revenue = d.UnitPriceAmount * d.Quantity })
             .ToListAsync(theCancellationToken);
 
-        var aCategoryNameByProductId = await GetCategoryNameByProductIdAsync(theCancellationToken);
+        var aCategoryNamesTask = GetCategoryNameByProductIdAsync(theCancellationToken);
+
+        await Task.WhenAll(aLinesTask, aCategoryNamesTask);
+
+        var aLines = await aLinesTask;
+        var aCategoryNameByProductId = await aCategoryNamesTask;
 
         var aGrouped = aLines
             .GroupBy(l => l.ProductId)
@@ -85,13 +94,27 @@ internal sealed class SqlReportReadRepository : IReportReadRepository
 
     public async Task<IReadOnlyList<CategorySalesView>> GetSalesByCategoryAsync(CancellationToken theCancellationToken = default)
     {
-        var aLines = await SalesLinesQuery()
+        // SQL branch: the sales lines (AppDbContext).
+        var aLinesTask = SalesLinesQuery()
             .Select(d => new { d.ProductId, d.Quantity, Revenue = d.UnitPriceAmount * d.Quantity })
             .ToListAsync(theCancellationToken);
 
-        var aProducts = await myDirectory.GetProductsAsync(theCancellationToken);
+        // MongoDB branch: products + category names. Both use the SAME Mongo context, so they run
+        // sequentially WITHIN this branch; the whole branch then overlaps the SQL branch above.
+        async Task<(IReadOnlyList<CatalogProduct> Products, IReadOnlyDictionary<Guid, string> CategoryNames)> LoadDimensionsAsync()
+        {
+            var aProductList = await myDirectory.GetProductsAsync(theCancellationToken);
+            var aNames = await myDirectory.GetCategoryNamesAsync(theCancellationToken);
+            return (aProductList, aNames);
+        }
+
+        var aDimensionsTask = LoadDimensionsAsync();
+
+        await Task.WhenAll(aLinesTask, aDimensionsTask);
+
+        var aLines = await aLinesTask;
+        var (aProducts, aCategoryNameById) = await aDimensionsTask;
         var aCategoryIdByProductId = aProducts.ToDictionary(p => p.Id, p => p.CategoryId);
-        var aCategoryNameById = await myDirectory.GetCategoryNamesAsync(theCancellationToken);
 
         return aLines
             .GroupBy(l => aCategoryIdByProductId.GetValueOrDefault(l.ProductId))
