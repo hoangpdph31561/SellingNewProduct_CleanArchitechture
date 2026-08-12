@@ -23,7 +23,11 @@ public static class DependencyInjection
 
         theServices.AddMediatR(theConfig => theConfig.RegisterServicesFromAssembly(aAssembly));
 
-        // Validation runs as the outermost pipeline step, before any handler.
+        // Telemetry is the OUTERMOST step (registered first) so it times the whole pipeline, validation
+        // included — one trace span + RED metrics per request. Then validation, then the handler.
+        theServices.AddTransient(typeof(IPipelineBehavior<,>), typeof(TelemetryBehavior<,>));
+
+        // Validation runs before any handler (but inside telemetry).
         theServices.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         // Command/query validators (request shape). Discovered by ValidationBehavior via DI.

@@ -1,0 +1,49 @@
+# Observability stack for SellingNewProduct (a single-service modular monolith, not microservices).
+# Prometheus scrapes the API's /metrics endpoint; Grafana visualizes; Alertmanager fires alerts.
+#
+# The API exposes /metrics via the OpenTelemetry Prometheus exporter (see ObservabilitySetup.cs).
+# Run the API on the HTTP profile (http://localhost:5044) so Prometheus can scrape without a dev cert:
+#   dotnet run --project SellingNewProduct.API --launch-profile http
+# Then:
+#   docker compose -f deploy/observability/docker-compose.observability.yml up -d
+#   Prometheus  http://localhost:9090
+#   Grafana     http://localhost:3000   (admin / admin123)
+#   Alertmanager http://localhost:9093
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alerts:/etc/prometheus/alerts
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    extra_hosts:
+      # Lets the container reach the API running on the Windows host at host.docker.internal:5044.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+
+volumes:
+  prometheus-data:
+  grafana-data:

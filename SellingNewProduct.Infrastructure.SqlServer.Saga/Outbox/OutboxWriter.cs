@@ -1,4 +1,5 @@
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Infrastructure.Messaging.Outbox;
 using SellingNewProduct.Infrastructure.Saga.Core.Outbox;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Models;
 using SellingNewProduct.Infrastructure.SqlServer.Saga.Persistence;
@@ -16,11 +17,13 @@ internal sealed class OutboxWriter
 {
     private readonly AppDbContext myAppDbContext;
     private readonly OutboxRouter myRouter;
+    private readonly IOutboxSignal mySignal;
 
-    public OutboxWriter(AppDbContext theAppDbContext, OutboxRouter theRouter)
+    public OutboxWriter(AppDbContext theAppDbContext, OutboxRouter theRouter, IOutboxSignal theSignal)
     {
         myAppDbContext = theAppDbContext;
         myRouter = theRouter;
+        mySignal = theSignal;
     }
 
     /// <summary>Stages every message the aggregate's events produce; returns how many rows were added.</summary>
@@ -43,6 +46,15 @@ internal sealed class OutboxWriter
         }
 
         theAggregate.ClearDomainEvents();
+
+        // Ring the dispatcher's bell so it drains right after the caller commits, instead of waiting
+        // for the next poll. Best-effort: if the caller's SaveChanges later rolls back, the wake finds
+        // nothing and the poll still covers any row that slipped through. Coalesced by the signal.
+        if (aEntries.Count > 0)
+        {
+            mySignal.Notify();
+        }
+
         return aEntries.Count;
     }
 }

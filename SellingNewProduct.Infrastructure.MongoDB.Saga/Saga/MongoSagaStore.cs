@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Models;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
@@ -15,10 +16,12 @@ namespace SellingNewProduct.Infrastructure.MongoDB.Saga.Saga;
 internal sealed class MongoSagaStore : ISagaStore
 {
     private readonly MongoAppDbContext myContext;
+    private readonly ILogger<MongoSagaStore> myLogger;
 
-    public MongoSagaStore(MongoAppDbContext theContext)
+    public MongoSagaStore(MongoAppDbContext theContext, ILogger<MongoSagaStore> theLogger)
     {
         myContext = theContext;
+        myLogger = theLogger;
     }
 
     public async Task StartAsync(Guid theSagaId, string theName, CancellationToken theCancellationToken = default)
@@ -52,6 +55,9 @@ internal sealed class MongoSagaStore : ISagaStore
 
         aDocument.Steps.Add(ToDocument(theStep));
         aDocument.UpdatedUtc = DateTime.UtcNow;
+
+        // Forward progress: the step is being recorded together with its local business commit.
+        myLogger.LogInformation("Saga {SagaId}: step '{Step}' ({Kind}) recorded.", theSagaId, theStep.Name, theStep.Kind);
     }
 
     public async Task EnrollStepAsync(Guid theSagaId, SagaStepInfo theStep, CancellationToken theCancellationToken = default)

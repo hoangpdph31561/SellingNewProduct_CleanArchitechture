@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 
@@ -18,18 +19,28 @@ internal sealed class SagaUnitOfWork : IUnitOfWork
     private readonly SagaContext myContext;
     private readonly ISagaStore myStore;
     private readonly SagaCompensator myCompensator;
+    private readonly ILogger<SagaUnitOfWork> myLogger;
+    private readonly ILogger<SagaUnitOfWorkTransaction> myTransactionLogger;
 
-    public SagaUnitOfWork(SagaContext theContext, ISagaStore theStore, SagaCompensator theCompensator)
+    public SagaUnitOfWork(
+        SagaContext theContext,
+        ISagaStore theStore,
+        SagaCompensator theCompensator,
+        ILogger<SagaUnitOfWork> theLogger,
+        ILogger<SagaUnitOfWorkTransaction> theTransactionLogger)
     {
         myContext = theContext;
         myStore = theStore;
         myCompensator = theCompensator;
+        myLogger = theLogger;
+        myTransactionLogger = theTransactionLogger;
     }
 
     public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken theCancellationToken = default)
     {
         myContext.Begin("OrderWrite");
         await myStore.StartAsync(myContext.SagaId, myContext.Name, theCancellationToken);
-        return new SagaUnitOfWorkTransaction(myContext, myStore, myCompensator);
+        myLogger.LogInformation("Saga {SagaId} '{Name}' started.", myContext.SagaId, myContext.Name);
+        return new SagaUnitOfWorkTransaction(myContext, myStore, myCompensator, myTransactionLogger);
     }
 }

@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - "alerts/*.yml"
+
+scrape_configs:
+  # The SellingNewProduct API — one target (modular monolith). It exposes /metrics via the
+  # OpenTelemetry Prometheus exporter. host.docker.internal reaches the API on the host (HTTP profile).
+  - job_name: 'sellingnewproduct-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5044']

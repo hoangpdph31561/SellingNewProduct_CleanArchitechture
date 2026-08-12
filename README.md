@@ -69,16 +69,17 @@ API ──► Application ──┐
 dotnet run --project SellingNewProduct.API
 ```
 
-## 5. Tài liệu (đọc để continue ở chat mới)
+## 5. Tài liệu
+
+📚 **[docs/README.md](docs/README.md) — Bản đồ toàn bộ tài liệu** (nhóm theo chủ đề + lộ trình đọc + tìm nhanh theo câu hỏi). Bắt đầu từ đây.
+
+Lối tắt hay dùng:
 
 | File | Nội dung |
 |------|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Nguyên tắc kiến trúc, luồng dữ liệu, cách map Domain↔Persistence |
-| [docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md) | Mô hình nghiệp vụ: Aggregate, Entity, Value Object, business rule |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | **Checklist tiến độ** — nguồn sự thật để tiếp tục công việc |
-| [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, code style, package |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Nguyên tắc kiến trúc, luồng dữ liệu, map Domain↔Persistence |
+| [docs/TONG-HOP-KIEN-THUC.md](docs/TONG-HOP-KIEN-THUC.md) | **Tổng hợp mọi pattern + so sánh công nghệ** (async, saga, Kafka/RabbitMQ/Redis, NFR/observability) |
 | [docs/code/](docs/code/README.md) | **Giải thích từng file `.cs` và từng method** (cho người học) |
-| [docs/code/05-Application.md](docs/code/05-Application.md) | **Tầng Application (CQRS)**: Command/Query + Handler + Validator, MediatR `ISender`, `ValidationBehavior`; read-model JOIN nhiều bảng (SQL vs Mongo) |
-| [docs/code/06-Pagination-Search.md](docs/code/06-Pagination-Search.md) | **Phân trang, tìm kiếm, lọc & sắp xếp**: `PagedResult<T>`, filter, sort (SQL vs Mongo) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | **Checklist tiến độ** — nguồn sự thật để tiếp tục công việc |
 
-> **Khi mở chat mới:** bảo Claude đọc `docs/ROADMAP.md` trước để biết đã làm tới đâu.
+> **Khi mở chat mới:** bảo Claude đọc `docs/ROADMAP.md` trước để biết đã làm tới đâu; đọc `docs/README.md` để tìm tài liệu.

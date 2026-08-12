@@ -1,0 +1,43 @@
+# Alert rules for the SellingNewProduct API.
+# NOTE: metric names come from the OpenTelemetry Prometheus exporter (dots -> underscores, unit suffix,
+# histograms get _bucket/_sum/_count). Open http://localhost:5044/metrics to confirm the exact names in
+# your build and tweak the expressions if they differ.
+
+groups:
+  - name: sellingnewproduct-api
+    rules:
+      # Errors (RED): > 5% of MediatR requests failing over 5 minutes.
+      - alert: HighApplicationErrorRate
+        expr: |
+          (sum(rate(app_request_total{outcome="error"}[5m]))
+            / sum(rate(app_request_total[5m]))) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High application error rate"
+          description: "{{ $value | humanizePercentage }} of requests are failing."
+
+      # Duration (RED): p99 HTTP latency over 1s.
+      - alert: SlowHttpResponses
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le)) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 HTTP latency > 1s"
+          description: "The 99th percentile request latency has exceeded one second."
+
+      # Outbox: any sustained publish failures means events are backing up (broker down / bug).
+      - alert: OutboxPublishFailing
+        expr: sum(rate(outbox_failed_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox is failing to publish"
+          description: "Events are not reaching Kafka/RabbitMQ; they will retry but check the broker."
+
+      # Readiness: the /health/ready probe (scraped separately, or via a blackbox exporter) — placeholder.

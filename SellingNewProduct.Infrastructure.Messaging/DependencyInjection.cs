@@ -40,6 +40,13 @@ public static class DependencyInjection
         theServices.AddSingleton<ICommandPublisher, RabbitMqCommandPublisher>();
         theServices.AddHostedService<RabbitMqConsumerHostedService>();
 
+        // Wake-up signal (Channel) so the write side can trigger an immediate drain instead of waiting
+        // for the next poll, plus an in-memory ring buffer (ConcurrentQueue) of recent dispatch results
+        // for the diagnostics endpoint. Both singletons: producers and the dispatcher share one instance.
+        theServices.AddSingleton<IOutboxSignal, OutboxSignal>();
+        theServices.AddSingleton<IOutboxActivityLog, OutboxActivityLog>();
+        theServices.AddSingleton<OutboxMetrics>();
+
         // The relay that drains every outbox and routes each row to Kafka or RabbitMQ by destination.
         theServices.AddHostedService<OutboxDispatcher>();
 

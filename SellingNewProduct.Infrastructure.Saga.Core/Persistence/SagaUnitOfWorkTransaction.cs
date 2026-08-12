@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SellingNewProduct.Domain.Interfaces.Outbound;
 using SellingNewProduct.Infrastructure.Saga.Core.Saga;
 
@@ -22,13 +23,17 @@ internal sealed class SagaUnitOfWorkTransaction : IUnitOfWorkTransaction
     private readonly SagaContext myContext;
     private readonly ISagaStore myStore;
     private readonly SagaCompensator myCompensator;
+    private readonly ILogger<SagaUnitOfWorkTransaction> myLogger;
     private bool myFinished;
 
-    public SagaUnitOfWorkTransaction(SagaContext theContext, ISagaStore theStore, SagaCompensator theCompensator)
+    public SagaUnitOfWorkTransaction(
+        SagaContext theContext, ISagaStore theStore, SagaCompensator theCompensator,
+        ILogger<SagaUnitOfWorkTransaction> theLogger)
     {
         myContext = theContext;
         myStore = theStore;
         myCompensator = theCompensator;
+        myLogger = theLogger;
     }
 
     public async Task CommitAsync(CancellationToken theCancellationToken = default)
@@ -44,6 +49,7 @@ internal sealed class SagaUnitOfWorkTransaction : IUnitOfWorkTransaction
         // Every step already committed to its own database; the saga succeeded, so just drop the
         // ledger entry. (A surviving entry is exactly what tells recovery a saga did NOT finish.)
         await myStore.RemoveAsync(myContext.SagaId, theCancellationToken);
+        myLogger.LogInformation("Saga {SagaId} committed (all steps succeeded).", myContext.SagaId);
     }
 
     public async Task RollbackAsync(CancellationToken theCancellationToken = default)
@@ -55,10 +61,12 @@ internal sealed class SagaUnitOfWorkTransaction : IUnitOfWorkTransaction
 
         myFinished = true;
         myContext.MarkCompensating();
+        myLogger.LogWarning("Saga {SagaId} rolling back: a step failed, compensating recorded steps.", myContext.SagaId);
 
         var aSaga = await myStore.LoadAsync(myContext.SagaId, theCancellationToken);
         if (aSaga is null)
         {
+            myLogger.LogInformation("Saga {SagaId}: nothing recorded yet — no compensation needed.", myContext.SagaId);
             return; // Nothing was recorded (saga failed before any step committed) — nothing to undo.
         }
 
@@ -66,12 +74,14 @@ internal sealed class SagaUnitOfWorkTransaction : IUnitOfWorkTransaction
         if (aCompensated)
         {
             myContext.MarkCompensated();
+            myLogger.LogInformation("Saga {SagaId} compensated (rolled back cleanly).", myContext.SagaId);
         }
         else
         {
             // The compensator already parked the saga in NeedsManualReview and logged it; the startup
             // recovery worker will keep retrying it on the next run.
             myContext.MarkNeedsManualReview();
+            myLogger.LogError("Saga {SagaId} could NOT be compensated — parked for manual review.", myContext.SagaId);
         }
     }
 

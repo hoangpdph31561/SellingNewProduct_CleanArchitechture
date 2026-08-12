@@ -21,17 +21,26 @@ public sealed class OutboxDispatcher : BackgroundService
     private readonly IServiceScopeFactory myScopeFactory;
     private readonly IEventBus myEventBus;
     private readonly ICommandPublisher myCommandPublisher;
+    private readonly IOutboxSignal mySignal;
+    private readonly IOutboxActivityLog myActivityLog;
+    private readonly OutboxMetrics myMetrics;
     private readonly ILogger<OutboxDispatcher> myLogger;
 
     public OutboxDispatcher(
         IServiceScopeFactory theScopeFactory,
         IEventBus theEventBus,
         ICommandPublisher theCommandPublisher,
+        IOutboxSignal theSignal,
+        IOutboxActivityLog theActivityLog,
+        OutboxMetrics theMetrics,
         ILogger<OutboxDispatcher> theLogger)
     {
         myScopeFactory = theScopeFactory;
         myEventBus = theEventBus;
         myCommandPublisher = theCommandPublisher;
+        mySignal = theSignal;
+        myActivityLog = theActivityLog;
+        myMetrics = theMetrics;
         myLogger = theLogger;
     }
 
@@ -53,7 +62,10 @@ public sealed class OutboxDispatcher : BackgroundService
                 myLogger.LogError(aException, "Outbox dispatch tick failed; will retry.");
             }
 
-            await Task.Delay(PollInterval, theStoppingToken);
+            // Wait for the write side to ring the bell (near-instant dispatch), but wake anyway after
+            // PollInterval so an unpublished row is never stranded even if a signal is missed or the
+            // broker was down when it was first tried. Replaces a plain Task.Delay poll.
+            await mySignal.WaitForWorkAsync(PollInterval, theStoppingToken);
         }
     }
 
@@ -77,19 +89,35 @@ public sealed class OutboxDispatcher : BackgroundService
 
         foreach (var aMessage in aMessages)
         {
+            var aDestination = aMessage.Destination.ToString();
+            var aStopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 await PublishAsync(aMessage, theCancellationToken);
                 await theStore.MarkPublishedAsync(aMessage.Id, theCancellationToken);
+                myMetrics.Published(aDestination, aMessage.MessageType, aStopwatch.Elapsed.TotalMilliseconds);
+                RecordActivity(aMessage, "published", null);
             }
             catch (Exception aException)
             {
                 // Leave it unpublished (record the reason) so the next tick retries it.
                 myLogger.LogWarning(aException, "Outbox: failed to publish {Id} ({Type}).", aMessage.Id, aMessage.MessageType);
                 await theStore.MarkFailedAsync(aMessage.Id, aException.Message, theCancellationToken);
+                myMetrics.Failed(aDestination, aMessage.MessageType);
+                RecordActivity(aMessage, "failed", aException.Message);
             }
         }
     }
+
+    private void RecordActivity(OutboxMessage theMessage, string theStatus, string? theError) =>
+        myActivityLog.Record(new OutboxActivityEntry(
+            DateTime.UtcNow,
+            theMessage.Id,
+            theMessage.MessageType,
+            theMessage.Route,
+            theMessage.Destination.ToString(),
+            theStatus,
+            theError));
 
     /// <summary>Route by nature, at the source: a fact goes to Kafka, a command goes to RabbitMQ.
     /// This is where "each broker handles what it is best at" is enforced — no funnel, no bridge.</summary>

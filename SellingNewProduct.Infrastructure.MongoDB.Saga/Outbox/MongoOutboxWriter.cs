@@ -1,4 +1,5 @@
 using SellingNewProduct.Domain.Common;
+using SellingNewProduct.Infrastructure.Messaging.Outbox;
 using SellingNewProduct.Infrastructure.Saga.Core.Outbox;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Models;
 using SellingNewProduct.Infrastructure.MongoDB.Saga.Persistence;
@@ -15,11 +16,13 @@ internal sealed class MongoOutboxWriter
 {
     private readonly MongoAppDbContext myContext;
     private readonly OutboxRouter myRouter;
+    private readonly IOutboxSignal mySignal;
 
-    public MongoOutboxWriter(MongoAppDbContext theContext, OutboxRouter theRouter)
+    public MongoOutboxWriter(MongoAppDbContext theContext, OutboxRouter theRouter, IOutboxSignal theSignal)
     {
         myContext = theContext;
         myRouter = theRouter;
+        mySignal = theSignal;
     }
 
     /// <summary>Stages outbox rows for every event across the given aggregates; clears their events.</summary>
@@ -47,6 +50,13 @@ internal sealed class MongoOutboxWriter
             }
 
             aAggregate.ClearDomainEvents();
+        }
+
+        // Wake the dispatcher for a near-instant drain after the caller's transaction commits (the poll
+        // remains the safety net). Coalesced, best-effort — see the SQL OutboxWriter for the rationale.
+        if (aStaged > 0)
+        {
+            mySignal.Notify();
         }
 
         return aStaged;

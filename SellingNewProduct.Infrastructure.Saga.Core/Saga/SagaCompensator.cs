@@ -68,6 +68,8 @@ public sealed class SagaCompensator
                     theSaga.SagaId, aStep.Name, MaxRetries);
                 return false;
             }
+
+            myLogger.LogInformation("Saga {SagaId}: step '{Step}' compensated.", theSaga.SagaId, aStep.Name);
         }
 
         await myStore.SetStatusAsync(theSaga.SagaId, SagaStatus.Compensated, theCancellationToken);
